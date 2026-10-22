@@ -39,5 +39,21 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "grid_power": {
+        "name": "Grid power"
+      },
+      "pv_power": {
+        "name": "Solar production"
+      },
+      "battery_soc": {
+        "name": "Battery state of charge (SOC)"
+      },
+      "electricity_price": {
+        "name": "Electricity price"
+      }
+    }
   }
 }

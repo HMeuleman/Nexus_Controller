@@ -39,5 +39,21 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "grid_power": {
+        "name": "Netvermogen"
+      },
+      "pv_power": {
+        "name": "Zonneproductie"
+      },
+      "battery_soc": {
+        "name": "Batterijlaadniveau (SOC)"
+      },
+      "electricity_price": {
+        "name": "Elektriciteitsprijs"
+      }
+    }
   }
 }

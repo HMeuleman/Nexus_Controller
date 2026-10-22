@@ -26,12 +26,12 @@ class NexusSensorDescription(SensorEntityDescription):
 SENSORS = tuple(
     NexusSensorDescription(
         key=key,
-        name=label,
+        translation_key=translation_key,
         native_unit_of_measurement=unit,
         config_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
     )
-    for key, (label, unit) in ENTITY_LABELS.items()
+    for key, (translation_key, unit) in ENTITY_LABELS.items()
     if key in SENSOR_ENTITIES
 )
 

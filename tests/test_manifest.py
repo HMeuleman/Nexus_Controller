@@ -32,3 +32,5 @@ def test_dutch_translation_has_all_config_and_options_fields():
     assert dutch["options"]["step"]["init"]["data"].keys() == english["options"]["step"][
         "init"
     ]["data"].keys()
+    assert dutch["entity"]["sensor"].keys() == english["entity"]["sensor"].keys()
+    assert dutch["entity"]["sensor"]["battery_soc"]["name"].endswith("(SOC)")
