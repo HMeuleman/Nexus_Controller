@@ -10,7 +10,7 @@ The control implementation is deliberately deferred until the selected Solis Mod
 
 ## Install with HACS
 
-This repository is not yet published or available from the HACS default catalog. Once published, add `HMeuleman/Nexus_Controller` in HACS under **Custom repositories**, select **Integration**, and install **Nexus Controller**. Restart Home Assistant and add it under **Settings > Devices & services > Add integration**.
+This repository is public but is not currently included in the HACS default catalog. In HACS, open the menu, select **Custom repositories**, add `HMeuleman/Nexus_Controller`, choose **Integration**, and install **Nexus Controller**. Restart Home Assistant and add it under **Settings > Devices & services > Add integration**.
 
 This preview is read-only and is provided for setup and sensor-mapping tests. Installing it does not take over battery operation.
 
