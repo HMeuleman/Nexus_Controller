@@ -34,6 +34,6 @@ SENSOR_ENTITIES: Final = (
 ENTITY_LABELS: Final = {
     CONF_GRID_POWER: ("Grid power", "W"),
     CONF_PV_POWER: ("Solar production", "W"),
-    CONF_BATTERY_SOC: ("Battery state of charge", "%"),
+    CONF_BATTERY_SOC: ("Battery state of charge (SOC)", "%"),
     CONF_ELECTRICITY_PRICE: ("Electricity price", "€/kWh"),
 }
