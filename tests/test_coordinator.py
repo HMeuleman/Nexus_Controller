@@ -19,6 +19,7 @@ def test_parse_numeric_state_converts_numeric_values_and_ignores_invalid(state, 
     [
         ([], 0),
         ([("500", "W"), ("1.2", "kW")], 1700),
+        ([("0.765", "kW")], 765),
         ([("500", "W"), ("unavailable", "W")], None),
         ([("500", "W"), ("1", "MW")], None),
     ],

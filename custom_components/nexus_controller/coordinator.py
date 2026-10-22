@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, PV_POWER_ENTITIES, REQUIRED_ENTITIES
+from .const import CONF_GRID_POWER, DOMAIN, PV_POWER_ENTITIES, REQUIRED_ENTITIES
 from .utils import parse_numeric_state, sum_power_states
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,19 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | None]]):
         for key in REQUIRED_ENTITIES:
             entity_id = self.entry.options.get(key, self.entry.data.get(key))
             state = self.hass.states.get(entity_id) if entity_id else None
-            data[key] = parse_numeric_state(state.state if state is not None else None)
+            if key == CONF_GRID_POWER:
+                data[key] = sum_power_states(
+                    [
+                        (
+                            state.state if state is not None else None,
+                            state.attributes.get("unit_of_measurement")
+                            if state is not None
+                            else None,
+                        )
+                    ]
+                )
+            else:
+                data[key] = parse_numeric_state(state.state if state is not None else None)
         pv_states: list[tuple[str | None, str | None]] = []
         for key in PV_POWER_ENTITIES:
             entity_id = self.configured_entity_id(key)
