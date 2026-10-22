@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nexus Controller",
+        "description": "Select the energy sensors and Solis control entities. Battery control is not activated by this initial version.",
+        "data": {
+          "grid_power_entity": "Grid power sensor",
+          "pv_power_entity": "Solar production sensor",
+          "battery_soc_entity": "Battery state of charge sensor",
+          "electricity_price_entity": "Electricity price sensor",
+          "charge_control_entity": "Battery charge control entity",
+          "discharge_control_entity": "Battery discharge control entity"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Nexus Controller is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Entity mappings",
+        "data": {
+          "grid_power_entity": "Grid power sensor",
+          "pv_power_entity": "Solar production sensor",
+          "battery_soc_entity": "Battery state of charge sensor",
+          "electricity_price_entity": "Electricity price sensor",
+          "charge_control_entity": "Battery charge control entity",
+          "discharge_control_entity": "Battery discharge control entity"
+        }
+      }
+    }
+  }
+}
