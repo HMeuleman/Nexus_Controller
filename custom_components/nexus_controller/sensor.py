@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ENTITY_LABELS, SENSOR_ENTITIES
+from .const import CONF_PV_POWER, DOMAIN, ENTITY_LABELS, SENSOR_ENTITIES
 from .coordinator import NexusCoordinator
 
 
@@ -46,7 +46,8 @@ async def async_setup_entry(
     async_add_entities(
         NexusInputSensor(coordinator, description)
         for description in SENSORS
-        if coordinator.configured_entity_id(description.config_key)
+        if description.config_key == CONF_PV_POWER
+        or coordinator.configured_entity_id(description.config_key)
     )
 
 

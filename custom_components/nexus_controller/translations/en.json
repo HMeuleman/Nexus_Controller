@@ -7,6 +7,8 @@
         "data": {
           "grid_power_entity": "Grid power sensor",
           "pv_power_entity": "Solar production sensor",
+          "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
+          "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge sensor",
           "electricity_price_entity": "Electricity price sensor",
           "charge_control_entity": "Battery charge control entity",
@@ -16,6 +18,9 @@
     },
     "abort": {
       "already_configured": "Nexus Controller is already configured."
+    },
+    "error": {
+      "duplicate_pv_entities": "Select each solar sensor only once."
     }
   },
   "options": {
@@ -25,6 +30,8 @@
         "data": {
           "grid_power_entity": "Grid power sensor",
           "pv_power_entity": "Solar production sensor",
+          "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
+          "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge sensor",
           "electricity_price_entity": "Electricity price sensor",
           "charge_control_entity": "Battery charge control entity",

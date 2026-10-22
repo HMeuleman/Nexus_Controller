@@ -9,8 +9,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, REQUIRED_ENTITIES
-from .utils import parse_numeric_state
+from .const import DOMAIN, PV_POWER_ENTITIES, REQUIRED_ENTITIES
+from .utils import parse_numeric_state, sum_power_states
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,8 +34,23 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | None]]):
             entity_id = self.entry.options.get(key, self.entry.data.get(key))
             state = self.hass.states.get(entity_id) if entity_id else None
             data[key] = parse_numeric_state(state.state if state is not None else None)
+        pv_states: list[tuple[str | None, str | None]] = []
+        for key in PV_POWER_ENTITIES:
+            entity_id = self.configured_entity_id(key)
+            if not entity_id:
+                continue
+            state = self.hass.states.get(entity_id)
+            pv_states.append(
+                (
+                    state.state if state is not None else None,
+                    state.attributes.get("unit_of_measurement") if state is not None else None,
+                )
+            )
+        data[PV_POWER_ENTITIES[0]] = sum_power_states(pv_states)
         return data
 
     def configured_entity_id(self, key: str) -> str | None:
         """Return the configured entity ID for a mapping key."""
+        if key in PV_POWER_ENTITIES and self.entry.options:
+            return self.entry.options.get(key)
         return self.entry.options.get(key, self.entry.data.get(key))

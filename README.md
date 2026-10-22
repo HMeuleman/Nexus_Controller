@@ -4,7 +4,7 @@ An experimental Home Assistant integration for a Zonneplan Nexus battery using t
 
 ## Current status
 
-This is an early development preview. Setup lets you select grid power, PV production, battery state of charge, electricity price, and candidate charge/discharge entities. It exposes the four selected numeric inputs as diagnostic sensors. **It does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on this integration for battery control.
+This is an early development preview. Setup lets you select grid power, up to three optional PV production sensors, battery state of charge, electricity price, and candidate charge/discharge entities. The PV diagnostic sensor sums configured sources and normalizes `kW` readings to `W`. With no PV sensors configured it reports `0 W`; if any configured PV source is unavailable or has an unsupported unit, the combined value is unknown. Select each PV source only once, and do not combine an aggregate PV sensor with its component sensors. The integration exposes configured inputs as diagnostic sensors. **It does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on this integration for battery control.
 
 The control implementation is deliberately deferred until the selected Solis Modbus entity IDs, units, valid ranges, update semantics, and behavior without the Zonneplan dongles have been confirmed. The Tweakers thread provides strategy discussion and partial YAML, not a complete verified control specification.
 
