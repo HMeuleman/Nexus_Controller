@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nexus Controller",
+        "description": "Selecteer de energiesensoren en Solis-regelelementen. Batterijbesturing is in deze eerste versie nog niet actief.",
+        "data": {
+          "grid_power_entity": "Netvermogenssensor",
+          "pv_power_entity": "Sensor voor zonnepaneelvermogen",
+          "pv_power_entity_2": "Extra sensor voor zonnepaneelvermogen 2 (optioneel)",
+          "pv_power_entity_3": "Extra sensor voor zonnepaneelvermogen 3 (optioneel)",
+          "battery_soc_entity": "Sensor voor batterijlaadniveau (SoC)",
+          "electricity_price_entity": "Sensor voor elektriciteitsprijs",
+          "charge_control_entity": "Regelelement voor batterij laden",
+          "discharge_control_entity": "Regelelement voor batterij ontladen"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Nexus Controller is al geconfigureerd."
+    },
+    "error": {
+      "duplicate_pv_entities": "Selecteer elke zonnepaneelsensor maar één keer."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Entiteitskoppelingen",
+        "data": {
+          "grid_power_entity": "Netvermogenssensor",
+          "pv_power_entity": "Sensor voor zonnepaneelvermogen",
+          "pv_power_entity_2": "Extra sensor voor zonnepaneelvermogen 2 (optioneel)",
+          "pv_power_entity_3": "Extra sensor voor zonnepaneelvermogen 3 (optioneel)",
+          "battery_soc_entity": "Sensor voor batterijlaadniveau (SoC)",
+          "electricity_price_entity": "Sensor voor elektriciteitsprijs",
+          "charge_control_entity": "Regelelement voor batterij laden",
+          "discharge_control_entity": "Regelelement voor batterij ontladen"
+        }
+      }
+    }
+  }
+}
