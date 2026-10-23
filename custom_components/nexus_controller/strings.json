@@ -13,6 +13,7 @@
           "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge (SOC) sensor",
           "electricity_price_entity": "Electricity price sensor",
+          "price_forecast_entity": "Price forecast sensor (optional; defaults to the price sensor's forecast attribute)",
           "charge_enable_entity": "Battery charge enable switch",
           "charge_power_entity": "Battery charge power number",
           "discharge_enable_entity": "Battery discharge enable switch",
@@ -42,6 +43,7 @@
           "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge (SOC) sensor",
           "electricity_price_entity": "Electricity price sensor",
+          "price_forecast_entity": "Price forecast sensor (optional; defaults to the price sensor's forecast attribute)",
           "charge_enable_entity": "Battery charge enable switch",
           "charge_power_entity": "Battery charge power number",
           "discharge_enable_entity": "Battery discharge enable switch",
@@ -77,6 +79,15 @@
       },
       "max_discharge_power": {
         "name": "Safe maximum discharge power"
+      },
+      "price_forecast_points": {
+        "name": "Price forecast points"
+      },
+      "forecast_lowest_price": {
+        "name": "Lowest forecast price"
+      },
+      "forecast_highest_price": {
+        "name": "Highest forecast price"
       }
     }
   }

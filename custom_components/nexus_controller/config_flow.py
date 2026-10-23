@@ -20,6 +20,7 @@ from .const import (
     CONF_GRID_POWER_L2,
     CONF_GRID_POWER_L3,
     CONF_PHASE_HEADROOM,
+    CONF_PRICE_FORECAST,
     DEFAULT_FUSE_LIMIT_A,
     DEFAULT_PHASE_HEADROOM_W,
     DOMAIN,
@@ -96,7 +97,7 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
             default=defaults.get(CONF_PHASE_HEADROOM, DEFAULT_PHASE_HEADROOM_W),
         ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5000)),
     }
-    for key in PV_POWER_ENTITIES:
+    for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
         else:
@@ -153,7 +154,7 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                     data_schema=_config_schema(user_input),
                     errors={"base": "duplicate_entities"},
                 )
-            for key in PV_POWER_ENTITIES:
+            for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)
 

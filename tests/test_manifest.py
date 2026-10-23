@@ -1,4 +1,4 @@
-"""Basic integration metadata checks."""
+﻿"""Basic integration metadata checks."""
 
 import ast
 import json
@@ -14,7 +14,7 @@ def test_manifest_has_expected_domain_and_config_flow():
 
     assert manifest["domain"] == "nexus_controller"
     assert manifest["config_flow"] is True
-    assert manifest["version"] == "0.2.2"
+    assert manifest["version"] == "0.3.0"
 
 
 def test_dutch_translation_has_all_config_and_options_fields():
@@ -76,3 +76,4 @@ def test_translations_include_all_phase_inputs_and_safety_outputs():
         assert required_keys <= translation["config"]["step"]["user"]["data"].keys()
         assert "max_charge_power" in translation["entity"]["sensor"]
         assert "max_discharge_power" in translation["entity"]["sensor"]
+

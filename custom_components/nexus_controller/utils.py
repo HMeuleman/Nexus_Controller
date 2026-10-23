@@ -2,6 +2,47 @@
 
 from __future__ import annotations
 
+import math
+from datetime import datetime
+
+
+def parse_price_forecast(forecast: object) -> list[tuple[datetime, float]]:
+    """Parse a Zonneplan-style `forecast` attribute into sorted (start, EUR/kWh) points.
+
+    Zonneplan sometimes serves partial or missing data, so unusable entries are
+    skipped and this never raises. Raw amounts are in 1e-7 EUR.
+    """
+    if not isinstance(forecast, (list, tuple)):
+        return []
+
+    points: dict[datetime, float] = {}
+    for entry in forecast:
+        if not isinstance(entry, dict):
+            continue
+        raw_start = entry.get("start_date") or entry.get("datetime")
+        start = raw_start
+        if isinstance(raw_start, str):
+            try:
+                start = datetime.fromisoformat(raw_start.strip().replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        if not isinstance(start, datetime) or start.tzinfo is None:
+            continue
+
+        raw_price = entry.get("price_tax_included")
+        if isinstance(raw_price, dict):
+            raw_price = raw_price.get("amount")
+        elif raw_price is None:
+            raw_price = entry.get("electricity_price")
+        try:
+            price = float(raw_price)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(price):
+            continue
+        points[start] = price * 1e-7 if abs(price) >= 100 else price
+    return sorted(points.items())
+
 
 def parse_numeric_state(value: str | None) -> float | None:
     """Return a finite numeric entity state, or None when it is not usable."""

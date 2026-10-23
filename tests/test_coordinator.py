@@ -1,10 +1,13 @@
 """Tests for safe input parsing in the Nexus coordinator."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from custom_components.nexus_controller.utils import (
     calculate_phase_power_limits,
     parse_numeric_state,
+    parse_price_forecast,
     sum_power_states,
     sum_pv_power_states,
     unique_entity_id_with_suffix,
@@ -102,3 +105,27 @@ def test_unique_entity_id_match_requires_single_suffix_match():
         )
         is None
     )
+
+
+def test_parse_price_forecast_reads_zonneplan_entries_and_skips_bad_ones():
+    """Raw Zonneplan amounts are 1e-7 EUR; malformed entries are skipped without raising."""
+    forecast = [
+        {"start_date": "2026-10-23T18:00:00+00:00", "price_tax_included": {"amount": 3509822}},
+        {"datetime": "2026-10-23T18:15:00Z", "electricity_price": 4000000},
+        {"start_date": "2026-10-23T18:30:00+00:00", "price_tax_included": {"amount": "x"}},
+        {"start_date": "2026-10-23T18:45:00", "price_tax_included": {"amount": 1}},
+        "garbage",
+    ]
+
+    points = parse_price_forecast(forecast)
+
+    assert points == [
+        (datetime(2026, 10, 23, 18, 0, tzinfo=UTC), pytest.approx(0.3509822)),
+        (datetime(2026, 10, 23, 18, 15, tzinfo=UTC), pytest.approx(0.4)),
+    ]
+
+
+@pytest.mark.parametrize("forecast", [None, "unavailable", 5, {}, []])
+def test_parse_price_forecast_returns_empty_for_missing_or_invalid_attribute(forecast):
+    """A temporarily failing forecast integration must never raise."""
+    assert parse_price_forecast(forecast) == []

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ELECTRICITY_PRICE,
     CONF_FUSE_LIMIT,
     CONF_PHASE_HEADROOM,
+    CONF_PRICE_FORECAST,
     DEFAULT_FUSE_LIMIT_A,
     DEFAULT_PHASE_HEADROOM_W,
     DOMAIN,
@@ -23,6 +26,7 @@ from .const import (
 from .utils import (
     calculate_phase_power_limits,
     parse_numeric_state,
+    parse_price_forecast,
     sum_power_states,
     sum_pv_power_states,
 )
@@ -41,6 +45,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | None]]):
             update_interval=timedelta(seconds=10),
         )
         self.entry = entry
+        self.price_forecast: list[tuple[datetime, float]] = []
 
     async def _async_update_data(self) -> dict[str, float | None]:
         """Read selected entity values and represent unavailable states as None."""
@@ -80,6 +85,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | None]]):
         )
         data["max_charge_power"] = limits[0]
         data["max_discharge_power"] = limits[1]
+
+        # Without a dedicated forecast sensor, the price sensor's own attribute is used.
+        forecast_entity_id = self.configured_entity_id(
+            CONF_PRICE_FORECAST
+        ) or self.configured_entity_id(CONF_ELECTRICITY_PRICE)
+        forecast_state = self.hass.states.get(forecast_entity_id) if forecast_entity_id else None
+        self.price_forecast = parse_price_forecast(
+            forecast_state.attributes.get("forecast") if forecast_state is not None else None
+        )
+        now = dt_util.utcnow()
+        upcoming = [price for start, price in self.price_forecast if start > now]
+        data["price_forecast_points"] = float(len(upcoming))
+        data["forecast_lowest_price"] = min(upcoming) if upcoming else None
+        data["forecast_highest_price"] = max(upcoming) if upcoming else None
         return data
 
     def _configured_number(self, key: str, default: float) -> float:

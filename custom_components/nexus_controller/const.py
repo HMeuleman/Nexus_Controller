@@ -13,6 +13,7 @@ CONF_PV_POWER_2: Final = "pv_power_entity_2"
 CONF_PV_POWER_3: Final = "pv_power_entity_3"
 CONF_BATTERY_SOC: Final = "battery_soc_entity"
 CONF_ELECTRICITY_PRICE: Final = "electricity_price_entity"
+CONF_PRICE_FORECAST: Final = "price_forecast_entity"
 CONF_CHARGE_ENABLE: Final = "charge_enable_entity"
 CONF_CHARGE_POWER: Final = "charge_power_entity"
 CONF_DISCHARGE_ENABLE: Final = "discharge_enable_entity"
@@ -45,6 +46,9 @@ SENSOR_ENTITIES: Final = (
     CONF_ELECTRICITY_PRICE,
     "max_charge_power",
     "max_discharge_power",
+    "price_forecast_points",
+    "forecast_lowest_price",
+    "forecast_highest_price",
 )
 
 ENTITY_LABELS: Final = {
@@ -56,4 +60,7 @@ ENTITY_LABELS: Final = {
     CONF_ELECTRICITY_PRICE: ("electricity_price", "€/kWh"),
     "max_charge_power": ("max_charge_power", "W"),
     "max_discharge_power": ("max_discharge_power", "W"),
+    "price_forecast_points": ("price_forecast_points", None),
+    "forecast_lowest_price": ("forecast_lowest_price", "€/kWh"),
+    "forecast_highest_price": ("forecast_highest_price", "€/kWh"),
 }
