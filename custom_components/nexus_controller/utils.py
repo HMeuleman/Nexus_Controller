@@ -30,6 +30,33 @@ def sum_power_states(states: list[tuple[str | None, str | None]]) -> float | Non
     return total
 
 
+def sum_pv_power_states(states: list[tuple[str | None, str | None]]) -> float | None:
+    """Sum PV sources, interpreting a valid-unit `unknown` state as zero output.
+
+    A missing state object, `unavailable` state, malformed value, or unsupported
+    unit remains unknown so a real entity or integration failure is not hidden.
+    """
+    total = 0.0
+    for value, unit in states:
+        normalized_unit = unit.casefold() if unit else ""
+        if normalized_unit == "kw":
+            multiplier = 1000
+        elif normalized_unit == "w":
+            multiplier = 1
+        else:
+            return None
+
+        if value is None or value == "unavailable":
+            return None
+        if value == "unknown":
+            continue
+        power = parse_numeric_state(value)
+        if power is None:
+            return None
+        total += power * multiplier
+    return total
+
+
 def calculate_phase_power_limits(
     phase_imports_w: tuple[float | None, float | None, float | None],
     fuse_limit_amps: float,

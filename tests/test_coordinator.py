@@ -6,6 +6,7 @@ from custom_components.nexus_controller.utils import (
     calculate_phase_power_limits,
     parse_numeric_state,
     sum_power_states,
+    sum_pv_power_states,
     unique_entity_id_with_suffix,
 )
 
@@ -34,6 +35,21 @@ def test_parse_numeric_state_converts_numeric_values_and_ignores_invalid(state, 
 def test_sum_power_states_normalizes_units_and_propagates_invalid_values(states, expected):
     """PV aggregation should not silently undercount missing or unsupported sensor values."""
     assert sum_power_states(states) == expected
+
+
+@pytest.mark.parametrize(
+    ("states", "expected"),
+    [
+        ([("unknown", "W")], 0),
+        ([("unknown", "kW"), ("0.8", "kW")], 800),
+        ([("100", "W"), ("unavailable", "W")], None),
+        ([("100", "W"), (None, "W")], None),
+        ([("unknown", None)], None),
+    ],
+)
+def test_sum_pv_power_states_treats_no_production_as_zero_but_keeps_faults(states, expected):
+    """Normal PV `unknown` is zero, while unavailable or invalid sources remain unknown."""
+    assert sum_pv_power_states(states) == expected
 
 
 def test_phase_power_limit_protects_exporting_phase():

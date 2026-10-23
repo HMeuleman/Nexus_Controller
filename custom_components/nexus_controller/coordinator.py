@@ -20,7 +20,12 @@ from .const import (
     PHASE_POWER_ENTITIES,
     PV_POWER_ENTITIES,
 )
-from .utils import calculate_phase_power_limits, parse_numeric_state, sum_power_states
+from .utils import (
+    calculate_phase_power_limits,
+    parse_numeric_state,
+    sum_power_states,
+    sum_pv_power_states,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +71,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | None]]):
                     state.attributes.get("unit_of_measurement") if state is not None else None,
                 )
             )
-        data[PV_POWER_ENTITIES[0]] = sum_power_states(pv_states)
+        data[PV_POWER_ENTITIES[0]] = sum_pv_power_states(pv_states)
         limits = calculate_phase_power_limits(
             tuple(data.get(key) for key in PHASE_POWER_ENTITIES),
             self._configured_number(CONF_FUSE_LIMIT, DEFAULT_FUSE_LIMIT_A),
