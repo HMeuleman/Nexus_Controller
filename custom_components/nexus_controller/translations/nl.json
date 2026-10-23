@@ -19,7 +19,14 @@
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
-          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)"
+          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)",
+          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor het schaduwvoorstel, optioneel)",
+          "charge_price_below": "Laden van het net bij een prijs van hoogstens (EUR/kWh)",
+          "discharge_price_above": "Verbruik uit de batterij dekken bij een prijs van minstens (EUR/kWh)",
+          "min_margin_eur_kwh": "Minimale nettowinst per kWh voor handelen (EUR/kWh)",
+          "cycle_cost_eur_kwh": "Slijtage batterij per ontladen kWh (EUR/kWh)",
+          "export_tax_eur_kwh": "Belasting op teruggeleverde energie (EUR/kWh)",
+          "battery_capacity_kwh": "Bruikbare batterijcapaciteit (kWh)"
         }
       }
     },
@@ -27,7 +34,8 @@
       "already_configured": "Nexus Controller is al geconfigureerd."
     },
     "error": {
-      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
+      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer.",
+      "invalid_price_band": "De laadprijs moet lager zijn dan de ontlaadprijs."
     }
   },
   "options": {
@@ -49,7 +57,14 @@
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
-          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)"
+          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)",
+          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor het schaduwvoorstel, optioneel)",
+          "charge_price_below": "Laden van het net bij een prijs van hoogstens (EUR/kWh)",
+          "discharge_price_above": "Verbruik uit de batterij dekken bij een prijs van minstens (EUR/kWh)",
+          "min_margin_eur_kwh": "Minimale nettowinst per kWh voor handelen (EUR/kWh)",
+          "cycle_cost_eur_kwh": "Slijtage batterij per ontladen kWh (EUR/kWh)",
+          "export_tax_eur_kwh": "Belasting op teruggeleverde energie (EUR/kWh)",
+          "battery_capacity_kwh": "Bruikbare batterijcapaciteit (kWh)"
         }
       }
     }
@@ -88,6 +103,15 @@
       },
       "forecast_highest_price": {
         "name": "Hoogste verwachte prijs"
+      },
+      "shadow_mode": {
+        "name": "Schaduwvoorstel: modus"
+      },
+      "shadow_power": {
+        "name": "Schaduwvoorstel: vermogen"
+      },
+      "shadow_reason": {
+        "name": "Schaduwvoorstel: reden"
       }
     }
   }

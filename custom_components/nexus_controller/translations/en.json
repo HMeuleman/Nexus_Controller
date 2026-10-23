@@ -19,7 +19,14 @@
           "discharge_enable_entity": "Battery discharge enable switch",
           "discharge_power_entity": "Battery discharge power number",
           "fuse_limit_amps": "Fuse limit per phase (A)",
-          "phase_headroom_watts": "Reserved headroom per phase (W)"
+          "phase_headroom_watts": "Reserved headroom per phase (W)",
+          "battery_power_entity": "Battery net power sensor (W; positive discharges, negative charges; needed for the shadow proposal, optional)",
+          "charge_price_below": "Charge from the grid when the price is at most (EUR/kWh)",
+          "discharge_price_above": "Cover consumption from the battery when the price is at least (EUR/kWh)",
+          "min_margin_eur_kwh": "Minimum net gain per kWh before trading (EUR/kWh)",
+          "cycle_cost_eur_kwh": "Battery wear per discharged kWh (EUR/kWh)",
+          "export_tax_eur_kwh": "Tax on exported energy (EUR/kWh)",
+          "battery_capacity_kwh": "Usable battery capacity (kWh)"
         }
       }
     },
@@ -27,7 +34,8 @@
       "already_configured": "Nexus Controller is already configured."
     },
     "error": {
-      "duplicate_entities": "Select each phase and solar sensor only once."
+      "duplicate_entities": "Select each phase and solar sensor only once.",
+      "invalid_price_band": "The charge price must be lower than the discharge price."
     }
   },
   "options": {
@@ -49,7 +57,14 @@
           "discharge_enable_entity": "Battery discharge enable switch",
           "discharge_power_entity": "Battery discharge power number",
           "fuse_limit_amps": "Fuse limit per phase (A)",
-          "phase_headroom_watts": "Reserved headroom per phase (W)"
+          "phase_headroom_watts": "Reserved headroom per phase (W)",
+          "battery_power_entity": "Battery net power sensor (W; positive discharges, negative charges; needed for the shadow proposal, optional)",
+          "charge_price_below": "Charge from the grid when the price is at most (EUR/kWh)",
+          "discharge_price_above": "Cover consumption from the battery when the price is at least (EUR/kWh)",
+          "min_margin_eur_kwh": "Minimum net gain per kWh before trading (EUR/kWh)",
+          "cycle_cost_eur_kwh": "Battery wear per discharged kWh (EUR/kWh)",
+          "export_tax_eur_kwh": "Tax on exported energy (EUR/kWh)",
+          "battery_capacity_kwh": "Usable battery capacity (kWh)"
         }
       }
     }
@@ -88,6 +103,15 @@
       },
       "forecast_highest_price": {
         "name": "Highest forecast price"
+      },
+      "shadow_mode": {
+        "name": "Shadow proposal: mode"
+      },
+      "shadow_power": {
+        "name": "Shadow proposal: power"
+      },
+      "shadow_reason": {
+        "name": "Shadow proposal: reason"
       }
     }
   }
