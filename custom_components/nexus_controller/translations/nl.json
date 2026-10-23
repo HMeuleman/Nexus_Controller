@@ -3,16 +3,22 @@
     "step": {
       "user": {
         "title": "Nexus Controller",
-        "description": "Selecteer de energiesensoren en Solis-regelelementen. Batterijbesturing is in deze eerste versie nog niet actief.",
+        "description": "Positief fasevermogen betekent afname van het net; negatief betekent teruglevering. Batterijcommando's zijn in deze versie nog niet actief.",
         "data": {
-          "grid_power_entity": "Netvermogenssensor",
+          "grid_power_l1_entity": "Nettovermogen fase L1-sensor (W; positief is afname, negatief teruglevering)",
+          "grid_power_l2_entity": "Nettovermogen fase L2-sensor (W; positief is afname, negatief teruglevering)",
+          "grid_power_l3_entity": "Nettovermogen fase L3-sensor (W; positief is afname, negatief teruglevering)",
           "pv_power_entity": "Sensor voor zonnepaneelvermogen",
           "pv_power_entity_2": "Extra sensor voor zonnepaneelvermogen 2 (optioneel)",
           "pv_power_entity_3": "Extra sensor voor zonnepaneelvermogen 3 (optioneel)",
           "battery_soc_entity": "Sensor voor batterijlaadniveau (SOC)",
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
-          "charge_control_entity": "Regelelement voor batterij laden",
-          "discharge_control_entity": "Regelelement voor batterij ontladen"
+          "charge_enable_entity": "Schakelaar batterij laden",
+          "charge_power_entity": "Laadvermogen batterij",
+          "discharge_enable_entity": "Schakelaar batterij ontladen",
+          "discharge_power_entity": "Ontlaadvermogen batterij",
+          "fuse_limit_amps": "Zekeringlimiet per fase (A)",
+          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)"
         }
       }
     },
@@ -20,7 +26,7 @@
       "already_configured": "Nexus Controller is al geconfigureerd."
     },
     "error": {
-      "duplicate_pv_entities": "Selecteer elke zonnepaneelsensor maar één keer."
+      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
     }
   },
   "options": {
@@ -28,22 +34,34 @@
       "init": {
         "title": "Entiteitskoppelingen",
         "data": {
-          "grid_power_entity": "Netvermogenssensor",
+          "grid_power_l1_entity": "Nettovermogen fase L1-sensor (W; positief is afname, negatief teruglevering)",
+          "grid_power_l2_entity": "Nettovermogen fase L2-sensor (W; positief is afname, negatief teruglevering)",
+          "grid_power_l3_entity": "Nettovermogen fase L3-sensor (W; positief is afname, negatief teruglevering)",
           "pv_power_entity": "Sensor voor zonnepaneelvermogen",
           "pv_power_entity_2": "Extra sensor voor zonnepaneelvermogen 2 (optioneel)",
           "pv_power_entity_3": "Extra sensor voor zonnepaneelvermogen 3 (optioneel)",
           "battery_soc_entity": "Sensor voor batterijlaadniveau (SOC)",
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
-          "charge_control_entity": "Regelelement voor batterij laden",
-          "discharge_control_entity": "Regelelement voor batterij ontladen"
+          "charge_enable_entity": "Schakelaar batterij laden",
+          "charge_power_entity": "Laadvermogen batterij",
+          "discharge_enable_entity": "Schakelaar batterij ontladen",
+          "discharge_power_entity": "Ontlaadvermogen batterij",
+          "fuse_limit_amps": "Zekeringlimiet per fase (A)",
+          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)"
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "grid_power": {
-        "name": "Netvermogen"
+      "grid_power_l1": {
+        "name": "Nettovermogen L1"
+      },
+      "grid_power_l2": {
+        "name": "Nettovermogen L2"
+      },
+      "grid_power_l3": {
+        "name": "Nettovermogen L3"
       },
       "pv_power": {
         "name": "Zonneproductie"
@@ -53,6 +71,12 @@
       },
       "electricity_price": {
         "name": "Elektriciteitsprijs"
+      },
+      "max_charge_power": {
+        "name": "Veilig maximaal laadvermogen"
+      },
+      "max_discharge_power": {
+        "name": "Veilig maximaal ontlaadvermogen"
       }
     }
   }

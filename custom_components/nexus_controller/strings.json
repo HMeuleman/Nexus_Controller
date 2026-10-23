@@ -3,16 +3,22 @@
     "step": {
       "user": {
         "title": "Nexus Controller",
-        "description": "Select the energy sensors and Solis control entities. Battery control is not activated by this initial version.",
+        "description": "Positive phase power means grid import; negative means export. Battery commands are not active in this version.",
         "data": {
-          "grid_power_entity": "Grid power sensor",
+          "grid_power_l1_entity": "Net power phase L1 sensor (W; positive import, negative export)",
+          "grid_power_l2_entity": "Net power phase L2 sensor (W; positive import, negative export)",
+          "grid_power_l3_entity": "Net power phase L3 sensor (W; positive import, negative export)",
           "pv_power_entity": "Solar production sensor",
           "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
           "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge (SOC) sensor",
           "electricity_price_entity": "Electricity price sensor",
-          "charge_control_entity": "Battery charge control entity",
-          "discharge_control_entity": "Battery discharge control entity"
+          "charge_enable_entity": "Battery charge enable switch",
+          "charge_power_entity": "Battery charge power number",
+          "discharge_enable_entity": "Battery discharge enable switch",
+          "discharge_power_entity": "Battery discharge power number",
+          "fuse_limit_amps": "Fuse limit per phase (A)",
+          "phase_headroom_watts": "Reserved headroom per phase (W)"
         }
       }
     },
@@ -20,7 +26,7 @@
       "already_configured": "Nexus Controller is already configured."
     },
     "error": {
-      "duplicate_pv_entities": "Select each solar sensor only once."
+      "duplicate_entities": "Select each phase and solar sensor only once."
     }
   },
   "options": {
@@ -28,22 +34,34 @@
       "init": {
         "title": "Entity mappings",
         "data": {
-          "grid_power_entity": "Grid power sensor",
+          "grid_power_l1_entity": "Net power phase L1 sensor (W; positive import, negative export)",
+          "grid_power_l2_entity": "Net power phase L2 sensor (W; positive import, negative export)",
+          "grid_power_l3_entity": "Net power phase L3 sensor (W; positive import, negative export)",
           "pv_power_entity": "Solar production sensor",
           "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
           "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
           "battery_soc_entity": "Battery state of charge (SOC) sensor",
           "electricity_price_entity": "Electricity price sensor",
-          "charge_control_entity": "Battery charge control entity",
-          "discharge_control_entity": "Battery discharge control entity"
+          "charge_enable_entity": "Battery charge enable switch",
+          "charge_power_entity": "Battery charge power number",
+          "discharge_enable_entity": "Battery discharge enable switch",
+          "discharge_power_entity": "Battery discharge power number",
+          "fuse_limit_amps": "Fuse limit per phase (A)",
+          "phase_headroom_watts": "Reserved headroom per phase (W)"
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "grid_power": {
-        "name": "Grid power"
+      "grid_power_l1": {
+        "name": "Net power L1"
+      },
+      "grid_power_l2": {
+        "name": "Net power L2"
+      },
+      "grid_power_l3": {
+        "name": "Net power L3"
       },
       "pv_power": {
         "name": "Solar production"
@@ -53,6 +71,12 @@
       },
       "electricity_price": {
         "name": "Electricity price"
+      },
+      "max_charge_power": {
+        "name": "Safe maximum charge power"
+      },
+      "max_discharge_power": {
+        "name": "Safe maximum discharge power"
       }
     }
   }

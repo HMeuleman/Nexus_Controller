@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_PV_POWER, DOMAIN, ENTITY_LABELS, SENSOR_ENTITIES
+from .const import DOMAIN, ENTITY_LABELS
 from .coordinator import NexusCoordinator
 
 
@@ -30,9 +30,9 @@ SENSORS = tuple(
         native_unit_of_measurement=unit,
         config_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
+        has_entity_name=True,
     )
     for key, (translation_key, unit) in ENTITY_LABELS.items()
-    if key in SENSOR_ENTITIES
 )
 
 
@@ -43,12 +43,7 @@ async def async_setup_entry(
 ) -> None:
     """Create diagnostic sensors for selected input entities."""
     coordinator: NexusCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        NexusInputSensor(coordinator, description)
-        for description in SENSORS
-        if description.config_key == CONF_PV_POWER
-        or coordinator.configured_entity_id(description.config_key)
-    )
+    async_add_entities(NexusInputSensor(coordinator, description) for description in SENSORS)
 
 
 class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):

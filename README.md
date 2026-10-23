@@ -1,10 +1,18 @@
 # Nexus Controller
 
+![Nexus Controller](custom_components/nexus_controller/brand/icon.png)
+
 An experimental Home Assistant integration for a Zonneplan Nexus battery using the modified Solis S6-EH3P10K-H-ZP inverter.
 
 ## Current status
 
-This is an early development preview. Setup lets you select grid power, up to three optional PV production sensors, battery state of charge, electricity price, and candidate charge/discharge entities. The PV diagnostic sensor sums configured sources and normalizes `kW` readings to `W`. With no PV sensors configured it reports `0 W`; if any configured PV source is unavailable or has an unsupported unit, the combined value is unknown. Select each PV source only once, and do not combine an aggregate PV sensor with its component sensors. The integration exposes configured inputs as diagnostic sensors. **It does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on this integration for battery control.
+This is an early development preview. Setup lets you select net grid power for each phase, up to three optional PV production sensors, battery state of charge, electricity price, and the four Solis charge/discharge switch and power entities. It also configures a fuse limit per phase (default 25 A) and headroom (default 1,000 W per phase). Phase sensors should use positive values for import and negative values for export. The PV diagnostic sensor sums configured sources and normalizes `kW` readings to `W`. With no PV sensors configured it reports `0 W`; if any configured PV source is unavailable or has an unsupported unit, the combined value is unknown. Select each sensor only once, and do not combine an aggregate PV sensor with its component sensors.
+
+The diagnostic safe charge/discharge power limits assume the inverter changes all three phases evenly. Each phase limit is based on the least available headroom across the three phase measurements, with an additional total Nexus cap of 10 kW. If any phase measurement is unavailable, both limits are unknown. **This preview does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on these diagnostic limits as a live protection system.
+
+After updating from an earlier version, open the integration's **Configure** dialog and select the three phase sensors and four Solis control entities. The former single grid-power entity cannot safely be migrated into three phase measurements.
+
+The four selected Solis controls are currently only mapped, not operated. Before live control is enabled, a charge/discharge mode change will need to disable both modes, zero both power settings, enable only the selected mode, and then apply its requested power. Repeated setpoint writes should be rate-limited; this sequence still needs offline dispatch tests and validation against the inverter before it can control a live battery.
 
 The control implementation is deliberately deferred until the selected Solis Modbus entity IDs, units, valid ranges, update semantics, and behavior without the Zonneplan dongles have been confirmed. The Tweakers thread provides strategy discussion and partial YAML, not a complete verified control specification.
 
