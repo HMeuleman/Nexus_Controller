@@ -60,6 +60,7 @@ def simulate_closed_loop(
     export: ExportSettings | None = None,
     dynamic_discharge: DischargeThresholdSettings | None = None,
     horizon_quarters: int = 48,
+    slot_seconds: float = 900,
 ) -> list[dict[str, float | str]]:
     """Run the planner on house load with the recorded battery power removed."""
     if len(samples) < 2:
@@ -72,7 +73,7 @@ def simulate_closed_loop(
     ):
         raise ValueError("Invalid battery model")
 
-    quarter_prices = _quarter_prices(samples)
+    quarter_prices = _quarter_prices(samples, slot_seconds)
     rows: list[dict[str, float | str]] = []
     memory = PIDMemory()
     power_w = 0.0  # signed: positive discharges, negative charges
@@ -111,7 +112,7 @@ def simulate_closed_loop(
         max_charge, max_discharge = calculate_phase_power_limits(
             base, fuse_limit_amps, phase_headroom_w, battery.max_power_w
         )
-        quarter = int(sample.timestamp.timestamp() // 900)
+        quarter = int(sample.timestamp.timestamp() // slot_seconds)
         horizon = [sample.electricity_price_eur_kwh] + [
             quarter_prices[q]
             for q in range(quarter + 1, quarter + horizon_quarters)
@@ -203,13 +204,14 @@ def simulate_closed_loop(
     return rows
 
 
-def _quarter_prices(samples: list[ReplaySample]) -> dict[int, float]:
-    """Map each quarter-hour (epoch // 900) in the trace to its price."""
+def _quarter_prices(samples: list[ReplaySample], slot_seconds: float) -> dict[int, float]:
+    """Map each price slot (epoch // slot length) in the trace to its price."""
     prices: dict[int, float] = {}
     for sample in samples:
         if sample.electricity_price_eur_kwh is not None:
             prices.setdefault(
-                int(sample.timestamp.timestamp() // 900), sample.electricity_price_eur_kwh
+                int(sample.timestamp.timestamp() // slot_seconds),
+                sample.electricity_price_eur_kwh,
             )
     return prices
 
@@ -293,7 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--expected-load-w", type=float, default=1000)
     parser.add_argument("--round-trip-efficiency", type=float, default=0.92)
-    parser.add_argument("--horizon-quarters", type=int, default=48)
+    parser.add_argument(
+        "--horizon-quarters", type=int, default=48, help="Price slots to look ahead"
+    )
+    parser.add_argument("--slot-seconds", type=float, default=900, help="Length of one price slot")
+    parser.add_argument("--charge-price-below", type=float, default=0.15)
+    parser.add_argument("--discharge-price-above", type=float, default=0.35)
     parser.add_argument("--cycle-cost", type=float, default=0.0, help="Wear EUR per kWh discharged")
     parser.add_argument("--export-tax", type=float, default=0.0, help="EUR per kWh exported")
     parser.add_argument("--export-margin", type=float, help="Min EUR/kWh gain; enables export")
@@ -325,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.round_trip_efficiency,
                 args.net_charge_power_w,
                 args.cycle_cost,
+                args.slot_seconds / 3600,
             )
         )
         dynamic_settings = (
@@ -333,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.round_trip_efficiency,
                 args.cycle_cost,
                 args.dynamic_discharge_margin,
+                args.slot_seconds / 3600,
             )
             if args.dynamic_discharge_margin is not None
             else None
@@ -353,6 +362,11 @@ def main(argv: list[str] | None = None) -> int:
             samples,
             tuning=tuning,
             battery=battery,
+            settings=replace(
+                DEFAULT_DISPATCH_SETTINGS,
+                charge_price_below=args.charge_price_below,
+                discharge_price_above=args.discharge_price_above,
+            ),
             fuse_limit_amps=args.fuse_limit_amps,
             phase_headroom_w=args.phase_headroom_w,
             max_sample_gap_seconds=args.max_sample_gap_seconds,
@@ -360,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
             export=export,
             dynamic_discharge=dynamic_settings,
             horizon_quarters=args.horizon_quarters,
+            slot_seconds=args.slot_seconds,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=RESULT_COLUMNS)

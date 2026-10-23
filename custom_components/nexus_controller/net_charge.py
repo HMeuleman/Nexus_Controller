@@ -16,6 +16,7 @@ class NetChargeSettings:
     round_trip_efficiency: float
     charge_power_w: float
     cycle_cost_eur_kwh: float = 0.0  # battery wear per kWh discharged
+    slot_hours: float = QUARTER_HOURS  # length of one price entry
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,9 @@ def should_net_charge(
     if not later_prices:
         return False
 
-    quarters_needed = math.ceil(headroom_kwh / (settings.charge_power_w / 1000 * QUARTER_HOURS))
+    quarters_needed = math.ceil(
+        headroom_kwh / (settings.charge_power_w / 1000 * settings.slot_hours)
+    )
     cheapest = sorted(prices_eur_kwh)[:quarters_needed]
     dearest = sorted(later_prices, reverse=True)
 
@@ -114,6 +117,7 @@ class DischargeThresholdSettings:
     round_trip_efficiency: float
     cycle_cost_eur_kwh: float
     min_margin_eur_kwh: float
+    slot_hours: float = QUARTER_HOURS  # length of one price entry
 
 
 def discharge_price_threshold(
@@ -137,7 +141,9 @@ def discharge_price_threshold(
     ):
         return None
 
-    quarters = max(1, math.ceil(stored_kwh / (settings.expected_load_w / 1000 * QUARTER_HOURS)))
+    quarters = max(
+        1, math.ceil(stored_kwh / (settings.expected_load_w / 1000 * settings.slot_hours))
+    )
     reserved_price = sorted(prices_eur_kwh, reverse=True)[:quarters][-1]
     refill_floor = (
         min(prices_eur_kwh) / settings.round_trip_efficiency

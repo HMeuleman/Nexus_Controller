@@ -33,14 +33,39 @@ def value_at(points: Series, times: list[datetime], moment: datetime) -> float |
     return None if index < 0 else points[index][1]
 
 
+def mean_over(
+    points: Series, times: list[datetime], start: datetime, end: datetime
+) -> float | None:
+    """Return the time-weighted mean of a step series over [start, end), ignoring unknown time."""
+    index = bisect_right(times, start) - 1
+    cursor = start
+    total = 0.0
+    covered = 0.0
+    while cursor < end:
+        next_change = times[index + 1] if index + 1 < len(times) else end
+        segment_end = min(next_change, end)
+        if index >= 0 and points[index][1] is not None:
+            seconds = (segment_end - cursor).total_seconds()
+            total += points[index][1] * seconds
+            covered += seconds
+        cursor = segment_end
+        index += 1
+    return total / covered if covered else None
+
+
 def build_rows(
     series: dict[str, Series],
     *,
     entities: dict[str, str],
     scales: dict[str, float],
     interval_seconds: float,
+    average: bool = False,
 ) -> list[dict[str, str | float]]:
-    """Resample series on a fixed grid, forward-filling and scaling to replay units."""
+    """Resample series on a fixed grid and scale to replay units.
+
+    Power series are sampled, or averaged over each interval when `average` is set
+    (needed for hourly statistics); SOC and price are always the value at the start.
+    """
     times = {key: [t for t, _ in series[entity]] for key, entity in entities.items()}
     points = {key: series[entity] for key, entity in entities.items()}
     start = max(times[key][0] for key in ("l1", "l2", "l3", "soc", "price", "battery"))
@@ -50,6 +75,10 @@ def build_rows(
     moment = start
     while moment <= end:
         values = {key: value_at(points[key], times[key], moment) for key in entities}
+        if average:
+            window_end = moment + timedelta(seconds=interval_seconds)
+            for key in ("l1", "l2", "l3", "pv", "battery"):
+                values[key] = mean_over(points[key], times[key], moment, window_end)
         required = ("l1", "l2", "l3", "soc", "price", "battery")
         if all(values[key] is not None for key in required):
             # Unavailable solar means the inverter is offline, which produces nothing.
@@ -94,6 +123,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="1 if positive grid values mean import, -1 if positive means export",
     )
     parser.add_argument("--interval-seconds", type=float, default=10)
+    parser.add_argument(
+        "--average", action="store_true", help="Average power series over each interval"
+    )
     return parser
 
 
@@ -126,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
                 "battery": args.battery_scale,
             },
             interval_seconds=args.interval_seconds,
+            average=args.average,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=TRACE_COLUMNS)

@@ -66,3 +66,14 @@ def test_discharge_threshold_is_unknown_without_energy_or_prices():
     assert (
         discharge_price_threshold(prices_eur_kwh=[0.4], stored_kwh=0.0, settings=settings) is None
     )
+
+
+def test_slot_length_scales_how_many_slots_a_battery_needs():
+    hourly = NetChargeSettings(0.04, 1.0, 10000.0, 0.0, 1.0)
+    prices = [0.20, 0.21, 0.22, 0.80, 0.80]
+
+    # 10 kWh at 10 kW needs one hourly slot, so only the cheapest slot qualifies.
+    assert should_net_charge(prices_eur_kwh=prices, headroom_kwh=10.0, settings=hourly)
+    assert not should_net_charge(
+        prices_eur_kwh=[0.21, 0.20, 0.22, 0.80], headroom_kwh=10.0, settings=hourly
+    )
