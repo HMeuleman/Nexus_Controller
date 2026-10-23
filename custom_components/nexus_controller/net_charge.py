@@ -104,3 +104,44 @@ def should_net_charge(
         return False
 
     return current_price <= cheapest[profitable_pairs - 1]
+
+
+@dataclass(frozen=True)
+class DischargeThresholdSettings:
+    """Inputs for a price threshold above which stored energy is worth spending."""
+
+    expected_load_w: float
+    round_trip_efficiency: float
+    cycle_cost_eur_kwh: float
+    min_margin_eur_kwh: float
+
+
+def discharge_price_threshold(
+    *,
+    prices_eur_kwh: list[float],
+    stored_kwh: float,
+    settings: DischargeThresholdSettings,
+) -> float | None:
+    """Return the lowest price at which discharging is still worthwhile, or None if unknown.
+
+    Stored energy is reserved for the dearest quarters it can cover at the expected
+    load, and the price must also beat refilling at the cheapest known quarter.
+    """
+    if (
+        not prices_eur_kwh
+        or not all(math.isfinite(price) for price in prices_eur_kwh)
+        or not math.isfinite(stored_kwh)
+        or stored_kwh <= 0
+        or settings.expected_load_w <= 0
+        or not 0 < settings.round_trip_efficiency <= 1
+    ):
+        return None
+
+    quarters = max(1, math.ceil(stored_kwh / (settings.expected_load_w / 1000 * QUARTER_HOURS)))
+    reserved_price = sorted(prices_eur_kwh, reverse=True)[:quarters][-1]
+    refill_floor = (
+        min(prices_eur_kwh) / settings.round_trip_efficiency
+        + settings.cycle_cost_eur_kwh
+        + settings.min_margin_eur_kwh
+    )
+    return max(reserved_price, refill_floor)

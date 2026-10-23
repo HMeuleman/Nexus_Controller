@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from custom_components.nexus_controller.control import PIDMemory, PIDTuning, simulate_dispatch_cycle
 from custom_components.nexus_controller.dispatch import (
@@ -12,8 +12,10 @@ from custom_components.nexus_controller.dispatch import (
     DispatchSettings,
 )
 from custom_components.nexus_controller.net_charge import (
+    DischargeThresholdSettings,
     ExportSettings,
     NetChargeSettings,
+    discharge_price_threshold,
     should_export_discharge,
     should_net_charge,
 )
@@ -56,6 +58,7 @@ def simulate_closed_loop(
     max_sample_gap_seconds: float = 900,
     net_charge: NetChargeSettings | None = None,
     export: ExportSettings | None = None,
+    dynamic_discharge: DischargeThresholdSettings | None = None,
     horizon_quarters: int = 48,
 ) -> list[dict[str, float | str]]:
     """Run the planner on house load with the recorded battery power removed."""
@@ -108,6 +111,29 @@ def simulate_closed_loop(
         max_charge, max_discharge = calculate_phase_power_limits(
             base, fuse_limit_amps, phase_headroom_w, battery.max_power_w
         )
+        quarter = int(sample.timestamp.timestamp() // 900)
+        horizon = [sample.electricity_price_eur_kwh] + [
+            quarter_prices[q]
+            for q in range(quarter + 1, quarter + horizon_quarters)
+            if q in quarter_prices
+        ]
+        step_settings = settings
+        if dynamic_discharge is not None:
+            stored_kwh = (
+                max(0.0, soc_pct - settings.min_soc_pct)
+                / 100
+                * battery.capacity_kwh
+                * battery.one_way_efficiency
+            )
+            threshold = discharge_price_threshold(
+                prices_eur_kwh=horizon, stored_kwh=stored_kwh, settings=dynamic_discharge
+            )
+            if threshold is not None:
+                step_settings = replace(
+                    settings,
+                    discharge_price_above=max(threshold, settings.charge_price_below + 0.01),
+                )
+
         step = simulate_dispatch_cycle(
             phase_imports_w=sim_phases,
             battery_soc_pct=soc_pct,
@@ -119,18 +145,12 @@ def simulate_closed_loop(
             max_discharge_power_w=max_discharge,
             interval_seconds=max(interval, 1e-9),
             tuning=tuning,
-            settings=settings,
+            settings=step_settings,
             memory=memory,
         )
         memory = step.memory
         plan = step.plan
 
-        quarter = int(sample.timestamp.timestamp() // 900)
-        horizon = [sample.electricity_price_eur_kwh] + [
-            quarter_prices[q]
-            for q in range(quarter + 1, quarter + horizon_quarters)
-            if q in quarter_prices
-        ]
         if (
             export is not None
             and plan.mode != "charge"
@@ -266,6 +286,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-power-w", type=float, default=10000)
     parser.add_argument("--net-charge-margin", type=float, help="Min EUR/kWh gain; enables module")
     parser.add_argument("--net-charge-power-w", type=float, default=10000)
+    parser.add_argument(
+        "--dynamic-discharge-margin",
+        type=float,
+        help="Min EUR/kWh gain; enables price-aware discharge threshold",
+    )
+    parser.add_argument("--expected-load-w", type=float, default=1000)
     parser.add_argument("--round-trip-efficiency", type=float, default=0.92)
     parser.add_argument("--horizon-quarters", type=int, default=48)
     parser.add_argument("--cycle-cost", type=float, default=0.0, help="Wear EUR per kWh discharged")
@@ -301,6 +327,16 @@ def main(argv: list[str] | None = None) -> int:
                 args.cycle_cost,
             )
         )
+        dynamic_settings = (
+            DischargeThresholdSettings(
+                args.expected_load_w,
+                args.round_trip_efficiency,
+                args.cycle_cost,
+                args.dynamic_discharge_margin,
+            )
+            if args.dynamic_discharge_margin is not None
+            else None
+        )
         export = (
             None
             if args.export_margin is None
@@ -322,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             max_sample_gap_seconds=args.max_sample_gap_seconds,
             net_charge=net_charge,
             export=export,
+            dynamic_discharge=dynamic_settings,
             horizon_quarters=args.horizon_quarters,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:

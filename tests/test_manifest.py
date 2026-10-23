@@ -1,4 +1,4 @@
-﻿"""Basic integration metadata checks."""
+"""Basic integration metadata checks."""
 
 import ast
 import json
@@ -76,4 +76,3 @@ def test_translations_include_all_phase_inputs_and_safety_outputs():
         assert required_keys <= translation["config"]["step"]["user"]["data"].keys()
         assert "max_charge_power" in translation["entity"]["sensor"]
         assert "max_discharge_power" in translation["entity"]["sensor"]
-

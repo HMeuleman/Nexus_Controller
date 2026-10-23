@@ -1,6 +1,10 @@
+import pytest
+
 from custom_components.nexus_controller.net_charge import (
+    DischargeThresholdSettings,
     ExportSettings,
     NetChargeSettings,
+    discharge_price_threshold,
     should_export_discharge,
     should_net_charge,
 )
@@ -38,3 +42,27 @@ def test_export_requires_margin_after_tax_wear_and_refill_cost():
     assert should_export_discharge(prices_eur_kwh=prices, soc_pct=80, settings=settings)
     assert not should_export_discharge(prices_eur_kwh=[0.35, 0.20], soc_pct=80, settings=settings)
     assert not should_export_discharge(prices_eur_kwh=prices, soc_pct=30, settings=settings)
+
+
+def test_discharge_threshold_reserves_energy_for_the_dearest_quarters():
+    settings = DischargeThresholdSettings(1000.0, 1.0, 0.0, 0.0)
+    prices = [0.30, 0.80, 0.40, 0.35]
+    # 0.5 kWh at 1 kW covers two quarters -> reserve for the two dearest: 0.80 and 0.40
+    assert (
+        discharge_price_threshold(prices_eur_kwh=prices, stored_kwh=0.5, settings=settings) == 0.40
+    )
+
+
+def test_discharge_threshold_never_undercuts_refill_cost_plus_margin():
+    settings = DischargeThresholdSettings(1000.0, 0.9, 0.08, 0.12)
+    prices = [0.30, 0.31, 0.32]
+    result = discharge_price_threshold(prices_eur_kwh=prices, stored_kwh=5.0, settings=settings)
+    assert result == pytest.approx(0.30 / 0.9 + 0.20)
+
+
+def test_discharge_threshold_is_unknown_without_energy_or_prices():
+    settings = DischargeThresholdSettings(1000.0, 1.0, 0.0, 0.0)
+    assert discharge_price_threshold(prices_eur_kwh=[], stored_kwh=1.0, settings=settings) is None
+    assert (
+        discharge_price_threshold(prices_eur_kwh=[0.4], stored_kwh=0.0, settings=settings) is None
+    )
