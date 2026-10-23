@@ -11,7 +11,7 @@ DispatchMode = Literal["idle", "charge", "discharge"]
 
 @dataclass(frozen=True)
 class DispatchSettings:
-    """Explicit strategy thresholds; values must be confirmed per installation."""
+    """Strategy thresholds for a dispatch plan."""
 
     charge_price_below: float
     discharge_price_above: float
@@ -29,6 +29,14 @@ class DispatchPlan:
     reason: str
 
 
+DEFAULT_DISPATCH_SETTINGS = DispatchSettings(
+    charge_price_below=0.15,
+    discharge_price_above=0.35,
+    min_soc_pct=7.0,
+    max_soc_pct=100.0,
+)
+
+
 def plan_battery_dispatch(
     *,
     phase_imports_w: tuple[float | None, float | None, float | None],
@@ -37,7 +45,7 @@ def plan_battery_dispatch(
     pv_power_w: float | None,
     max_charge_power_w: float | None,
     max_discharge_power_w: float | None,
-    settings: DispatchSettings,
+    settings: DispatchSettings = DEFAULT_DISPATCH_SETTINGS,
 ) -> DispatchPlan:
     """Propose a safe capped response to PV surplus and configured price bands.
 

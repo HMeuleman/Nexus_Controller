@@ -2,13 +2,10 @@
 
 import pytest
 
-from custom_components.nexus_controller.dispatch import DispatchSettings, plan_battery_dispatch
-
-SETTINGS = DispatchSettings(
-    charge_price_below=0.10,
-    discharge_price_above=0.30,
-    min_soc_pct=15,
-    max_soc_pct=90,
+from custom_components.nexus_controller.dispatch import (
+    DEFAULT_DISPATCH_SETTINGS,
+    DispatchSettings,
+    plan_battery_dispatch,
 )
 
 
@@ -19,7 +16,7 @@ def plan(
     pv: float | None = 0,
     charge_cap: float | None = 6000,
     discharge_cap: float | None = 6000,
-    settings: DispatchSettings = SETTINGS,
+    settings: DispatchSettings = DEFAULT_DISPATCH_SETTINGS,
 ):
     """Build a plan with representative valid input defaults."""
     return plan_battery_dispatch(
@@ -46,7 +43,7 @@ def test_pv_surplus_charges_only_enough_to_approach_zero_grid_power():
 
 def test_low_price_charging_uses_phase_limited_power():
     """Cheap-price charging is limited by the previously calculated safe cap."""
-    result = plan(price=0.05, charge_cap=3200)
+    result = plan(price=0.15, charge_cap=3200)
 
     assert (result.mode, result.power_w) == ("charge", 3200)
 
@@ -69,13 +66,30 @@ def test_high_price_discharge_is_inhibited_when_pv_is_available():
     assert result.mode == "idle"
 
 
+def test_price_between_thresholds_does_not_dispatch_on_price_alone():
+    """The gap between 0.15 and 0.35 €/kWh is a neutral price band."""
+    result = plan(price=0.25)
+
+    assert result.mode == "idle"
+
+
 @pytest.mark.parametrize(
     ("soc", "price", "expected_mode"),
-    [(15, 0.35, "idle"), (90, 0.05, "idle")],
+    [(7, 0.35, "idle"), (100, 0.15, "idle")],
 )
 def test_soc_boundaries_prevent_discharge_or_charge(soc, price, expected_mode):
     """Configured SOC reserve and ceiling are respected at their boundary."""
     assert plan(soc=soc, price=price).mode == expected_mode
+
+
+def test_default_dispatch_settings_match_user_confirmed_values():
+    """Current strategy defaults use the confirmed prices and SOC limits."""
+    assert DEFAULT_DISPATCH_SETTINGS == DispatchSettings(
+        charge_price_below=0.15,
+        discharge_price_above=0.35,
+        min_soc_pct=7,
+        max_soc_pct=100,
+    )
 
 
 def test_missing_phase_or_other_measurement_fails_idle():
