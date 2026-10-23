@@ -41,10 +41,12 @@ def test_sum_power_states_normalizes_units_and_propagates_invalid_values(states,
     ("states", "expected"),
     [
         ([("unknown", "W")], 0),
+        ([("unknown", None)], 0),
+        ([("unknown", "")], 0),
         ([("unknown", "kW"), ("0.8", "kW")], 800),
         ([("100", "W"), ("unavailable", "W")], None),
         ([("100", "W"), (None, "W")], None),
-        ([("unknown", None)], None),
+        ([("unknown", "MW")], None),
     ],
 )
 def test_sum_pv_power_states_treats_no_production_as_zero_but_keeps_faults(states, expected):

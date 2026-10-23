@@ -14,7 +14,7 @@ def test_manifest_has_expected_domain_and_config_flow():
 
     assert manifest["domain"] == "nexus_controller"
     assert manifest["config_flow"] is True
-    assert manifest["version"] == "0.2.1"
+    assert manifest["version"] == "0.2.2"
 
 
 def test_dutch_translation_has_all_config_and_options_fields():

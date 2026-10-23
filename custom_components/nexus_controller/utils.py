@@ -38,7 +38,12 @@ def sum_pv_power_states(states: list[tuple[str | None, str | None]]) -> float | 
     """
     total = 0.0
     for value, unit in states:
+        if value is None or value == "unavailable":
+            return None
+
         normalized_unit = unit.casefold() if unit else ""
+        if value == "unknown" and not normalized_unit:
+            continue
         if normalized_unit == "kw":
             multiplier = 1000
         elif normalized_unit == "w":
@@ -46,8 +51,6 @@ def sum_pv_power_states(states: list[tuple[str | None, str | None]]) -> float | 
         else:
             return None
 
-        if value is None or value == "unavailable":
-            return None
         if value == "unknown":
             continue
         power = parse_numeric_state(value)
