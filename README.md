@@ -18,6 +18,27 @@ An offline-only layered simulator is covered by unit tests. The decision layer u
 
 For permitted self-consumption actions, a separate closed-loop step uses measured net power and actual battery charge/discharge power, independent charge/discharge PID gains, integrator anti-windup, output filtering, and start/stop hysteresis. Cheap grid charging remains a separate proposal and does not run the fast PID loop. PID tunings are explicit simulation inputs; no live gains or hardware actions are configured. The simulator is not connected to Home Assistant entities or Solis services. The expected `€0.09/kWh` export tax from 2027 is intentionally excluded until an export-value price model is designed.
 
+### Replay real Home Assistant history
+
+`sim/replay.py` runs a shadow replay over one timestamp-aligned CSV. All power columns must be normalized to watts; grid phase values are positive for import and negative for export. Required columns:
+
+```text
+timestamp,grid_power_l1_w,grid_power_l2_w,grid_power_l3_w,pv_power_w,battery_soc_pct,electricity_price_eur_kwh,actual_charge_power_w,actual_discharge_power_w
+```
+
+Timestamps must be ISO-8601 with a timezone. `actual_charge_power_w` and `actual_discharge_power_w` are measured battery power sensors, not the writable `number.*` setpoints. Leave unknown readings blank; the planner will fail idle for that sample. Keep samples chronological and aligned. Gaps over 15 minutes reset controller memory and produce an idle row.
+
+Run from the repository root, supplying measured/tuned PID gains rather than guessed values:
+
+```powershell
+python -m sim.replay .\trace.csv .\replay.csv `
+	--kp-charge <value> --ki-charge <value> --kd-charge <value> `
+	--kp-discharge <value> --ki-discharge <value> --kd-discharge <value> `
+	--integral-limit-ws <value> --filter-alpha <value>
+```
+
+The output CSV preserves each input sample and adds the phase caps, proposed mode, proposed watts, and reason. This is a shadow analysis, not a counterfactual plant simulation: it does not predict how the inverter would have responded to a different command, and it never sends commands. A CSV export is not present in this repository yet, so no conclusion about your actual history has been drawn.
+
 The control implementation is deliberately deferred until the selected Solis Modbus entity IDs, units, valid ranges, update semantics, and behavior without the Zonneplan dongles have been confirmed. The Tweakers thread provides strategy discussion and partial YAML, not a complete verified control specification.
 
 ## Install with HACS
