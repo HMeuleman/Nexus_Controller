@@ -32,13 +32,20 @@ def plan(
 
 def test_pv_surplus_charges_only_enough_to_approach_zero_grid_power():
     """Solar export is absorbed without exceeding the phase-derived charge cap."""
-    result = plan(phases=(-1200, -800, -500), charge_cap=4000)
+    result = plan(phases=(-1200, -800, -500), pv=3000, charge_cap=4000)
 
     assert (result.mode, result.power_w, result.reason) == (
         "charge",
         2500,
         "pv_surplus_reduce_export",
     )
+
+
+def test_export_not_explained_by_pv_is_not_allowed_to_start_charging():
+    """Battery overshoot alone must not be mistaken for PV surplus."""
+    result = plan(phases=(-850, -850, -850), pv=200)
+
+    assert (result.mode, result.reason) == ("idle", "export_exceeds_pv")
 
 
 def test_low_price_charging_uses_phase_limited_power():

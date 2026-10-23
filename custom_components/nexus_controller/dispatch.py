@@ -18,6 +18,7 @@ class DispatchSettings:
     min_soc_pct: float
     max_soc_pct: float
     solar_inhibit_discharge_above_w: float = 0.0
+    pv_export_margin_w: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,9 +71,11 @@ def plan_battery_dispatch(
         or not math.isfinite(settings.min_soc_pct)
         or not math.isfinite(settings.max_soc_pct)
         or not math.isfinite(settings.solar_inhibit_discharge_above_w)
+        or not math.isfinite(settings.pv_export_margin_w)
         or settings.charge_price_below >= settings.discharge_price_above
         or not 0 <= settings.min_soc_pct < settings.max_soc_pct <= 100
         or settings.solar_inhibit_discharge_above_w < 0
+        or settings.pv_export_margin_w < 0
         or max_charge_power_w < 0
         or max_discharge_power_w < 0
     ):
@@ -84,6 +87,9 @@ def plan_battery_dispatch(
     assert max_charge_power_w is not None
     assert max_discharge_power_w is not None
     total_grid_import_w = sum(phase for phase in phase_imports_w if phase is not None)
+    measured_export_w = max(0.0, -total_grid_import_w)
+    if measured_export_w > pv_power_w + settings.pv_export_margin_w:
+        return DispatchPlan("idle", 0.0, "export_exceeds_pv")
 
     if (
         electricity_price >= settings.discharge_price_above
