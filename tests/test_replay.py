@@ -34,8 +34,7 @@ def sample(second: int, *, net: float = 50) -> ReplaySample:
         pv_power_w=0,
         battery_soc_pct=50,
         electricity_price_eur_kwh=0.35,
-        actual_charge_power_w=0,
-        actual_discharge_power_w=850,
+        battery_power_w=850,
     )
 
 
@@ -48,6 +47,30 @@ def test_replay_uses_actual_samples_and_returns_shadow_proposals():
     assert results[0].plan.power_w == 925
     assert results[0].max_discharge_power_w is not None
     assert results[0].max_discharge_power_w <= 10_000
+
+
+def test_negative_battery_power_is_treated_as_charging_feedback():
+    """Negative signed battery power feeds the charge direction of the PID."""
+    charging = ReplaySample(
+        timestamp=datetime.fromisoformat("2026-10-01T12:00:00+02:00"),
+        phase_imports_w=(-200, -200, -200),
+        pv_power_w=3000,
+        battery_soc_pct=50,
+        electricity_price_eur_kwh=0.25,
+        battery_power_w=-100,
+    )
+    later = ReplaySample(
+        timestamp=datetime.fromisoformat("2026-10-01T12:00:10+02:00"),
+        phase_imports_w=(-200, -200, -200),
+        pv_power_w=3000,
+        battery_soc_pct=50,
+        electricity_price_eur_kwh=0.25,
+        battery_power_w=-100,
+    )
+
+    results = replay_samples([charging, later], tuning=TUNING)
+
+    assert (results[0].plan.mode, results[0].plan.power_w) == ("charge", 400)
 
 
 def test_replay_resets_after_large_sample_gap():
@@ -77,8 +100,7 @@ def test_csv_loader_parses_timezone_and_blank_measurements(tmp_path):
                 "pv_power_w": "0",
                 "battery_soc_pct": "50",
                 "electricity_price_eur_kwh": "0.35",
-                "actual_charge_power_w": "",
-                "actual_discharge_power_w": "850",
+                "battery_power_w": "",
             }
         )
         writer.writerow(
@@ -90,8 +112,7 @@ def test_csv_loader_parses_timezone_and_blank_measurements(tmp_path):
                 "pv_power_w": "0",
                 "battery_soc_pct": "50",
                 "electricity_price_eur_kwh": "0.35",
-                "actual_charge_power_w": "0",
-                "actual_discharge_power_w": "850",
+                "battery_power_w": "-850",
             }
         )
 
@@ -99,7 +120,8 @@ def test_csv_loader_parses_timezone_and_blank_measurements(tmp_path):
 
     assert len(samples) == 2
     assert samples[0].phase_imports_w == (100, 200, 300)
-    assert samples[0].actual_charge_power_w is None
+    assert samples[0].battery_power_w is None
+    assert samples[1].battery_power_w == -850
     assert samples[0].timestamp.utcoffset().total_seconds() == 7200
 
 

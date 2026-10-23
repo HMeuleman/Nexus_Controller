@@ -30,8 +30,7 @@ TRACE_COLUMNS = (
     "pv_power_w",
     "battery_soc_pct",
     "electricity_price_eur_kwh",
-    "actual_charge_power_w",
-    "actual_discharge_power_w",
+    "battery_power_w",
 )
 OUTPUT_COLUMNS = (
     *TRACE_COLUMNS,
@@ -52,8 +51,8 @@ class ReplaySample:
     pv_power_w: float | None
     battery_soc_pct: float | None
     electricity_price_eur_kwh: float | None
-    actual_charge_power_w: float | None
-    actual_discharge_power_w: float | None
+    # Signed measured battery power: positive discharges, negative charges.
+    battery_power_w: float | None
 
 
 @dataclass(frozen=True)
@@ -85,8 +84,7 @@ def load_trace_csv(path: Path) -> list[ReplaySample]:
                 pv_power_w=parse_numeric_state(row["pv_power_w"]),
                 battery_soc_pct=parse_numeric_state(row["battery_soc_pct"]),
                 electricity_price_eur_kwh=parse_numeric_state(row["electricity_price_eur_kwh"]),
-                actual_charge_power_w=parse_numeric_state(row["actual_charge_power_w"]),
-                actual_discharge_power_w=parse_numeric_state(row["actual_discharge_power_w"]),
+                battery_power_w=parse_numeric_state(row["battery_power_w"]),
             )
             for row in reader
         ]
@@ -138,13 +136,14 @@ def replay_samples(
             fuse_limit_amps,
             phase_headroom_w,
         )
+        battery_power_w = sample.battery_power_w
         step = simulate_dispatch_cycle(
             phase_imports_w=sample.phase_imports_w,
             battery_soc_pct=sample.battery_soc_pct,
             electricity_price=sample.electricity_price_eur_kwh,
             pv_power_w=sample.pv_power_w,
-            actual_charge_power_w=sample.actual_charge_power_w,
-            actual_discharge_power_w=sample.actual_discharge_power_w,
+            actual_charge_power_w=None if battery_power_w is None else max(0.0, -battery_power_w),
+            actual_discharge_power_w=None if battery_power_w is None else max(0.0, battery_power_w),
             max_charge_power_w=max_charge,
             max_discharge_power_w=max_discharge,
             interval_seconds=interval_seconds,
@@ -173,8 +172,7 @@ def write_results_csv(results: list[ReplayResult], stream: TextIO) -> None:
                 "pv_power_w": sample.pv_power_w,
                 "battery_soc_pct": sample.battery_soc_pct,
                 "electricity_price_eur_kwh": sample.electricity_price_eur_kwh,
-                "actual_charge_power_w": sample.actual_charge_power_w,
-                "actual_discharge_power_w": sample.actual_discharge_power_w,
+                "battery_power_w": sample.battery_power_w,
                 "max_charge_power_w": result.max_charge_power_w,
                 "max_discharge_power_w": result.max_discharge_power_w,
                 "proposed_mode": result.plan.mode,

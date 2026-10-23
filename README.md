@@ -23,10 +23,10 @@ For permitted self-consumption actions, a separate closed-loop step uses measure
 `sim/replay.py` runs a shadow replay over one timestamp-aligned CSV. All power columns must be normalized to watts; grid phase values are positive for import and negative for export. Required columns:
 
 ```text
-timestamp,grid_power_l1_w,grid_power_l2_w,grid_power_l3_w,pv_power_w,battery_soc_pct,electricity_price_eur_kwh,actual_charge_power_w,actual_discharge_power_w
+timestamp,grid_power_l1_w,grid_power_l2_w,grid_power_l3_w,pv_power_w,battery_soc_pct,electricity_price_eur_kwh,battery_power_w
 ```
 
-Timestamps must be ISO-8601 with a timezone. `actual_charge_power_w` and `actual_discharge_power_w` are measured battery power sensors, not the writable `number.*` setpoints. Leave unknown readings blank; the planner will fail idle for that sample. Keep samples chronological and aligned. Gaps over 15 minutes reset controller memory and produce an idle row.
+Timestamps must be ISO-8601 with a timezone. `battery_power_w` is the measured net battery power (for example `sensor.solis_battery_power_net`), positive when the battery discharges and negative when it charges. It is not one of the writable `number.*` setpoints. Leave unknown readings blank; the planner will fail idle for that sample. Keep samples chronological and aligned. Gaps over 15 minutes reset controller memory and produce an idle row.
 
 Run from the repository root, supplying measured/tuned PID gains rather than guessed values:
 
