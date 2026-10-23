@@ -14,6 +14,8 @@ After updating from an earlier version, open the integration's **Configure** dia
 
 The four selected Solis controls are currently only mapped, not operated. Before live control is enabled, a charge/discharge mode change will need to disable both modes, zero both power settings, enable only the selected mode, and then apply its requested power. Repeated setpoint writes should be rate-limited; this sequence still needs offline dispatch tests and validation against the inverter before it can control a live battery.
 
+An offline-only dispatch planner is now covered by unit tests. It proposes charging from PV export, charging in an explicitly configured low-price band, or discharging toward zero grid import in an explicitly configured high-price/no-solar band. It observes the phase-derived power caps and explicit SOC boundaries. The planner is not connected to Home Assistant entities or Solis services, and no thresholds are assumed for a live installation.
+
 The control implementation is deliberately deferred until the selected Solis Modbus entity IDs, units, valid ranges, update semantics, and behavior without the Zonneplan dongles have been confirmed. The Tweakers thread provides strategy discussion and partial YAML, not a complete verified control specification.
 
 ## Install with HACS
