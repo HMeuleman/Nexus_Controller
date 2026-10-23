@@ -6,7 +6,12 @@ import csv
 from dataclasses import dataclass
 
 from custom_components.nexus_controller.control import PIDMemory, PIDTuning, simulate_dispatch_cycle
-from custom_components.nexus_controller.dispatch import DEFAULT_DISPATCH_SETTINGS, DispatchSettings
+from custom_components.nexus_controller.dispatch import (
+    DEFAULT_DISPATCH_SETTINGS,
+    DispatchPlan,
+    DispatchSettings,
+)
+from custom_components.nexus_controller.net_charge import NetChargeSettings, should_net_charge
 from custom_components.nexus_controller.utils import calculate_phase_power_limits
 from sim.replay import ReplaySample, _build_parser, load_trace_csv
 
@@ -44,6 +49,8 @@ def simulate_closed_loop(
     fuse_limit_amps: float = 25,
     phase_headroom_w: float = 1000,
     max_sample_gap_seconds: float = 900,
+    net_charge: NetChargeSettings | None = None,
+    horizon_quarters: int = 48,
 ) -> list[dict[str, float | str]]:
     """Run the planner on house load with the recorded battery power removed."""
     if len(samples) < 2:
@@ -56,6 +63,7 @@ def simulate_closed_loop(
     ):
         raise ValueError("Invalid battery model")
 
+    quarter_prices = _quarter_prices(samples)
     rows: list[dict[str, float | str]] = []
     memory = PIDMemory()
     power_w = 0.0  # signed: positive discharges, negative charges
@@ -90,8 +98,9 @@ def simulate_closed_loop(
         base = tuple(phase + sample.battery_power_w / 3 for phase in sample.phase_imports_w)
         sim_phases = tuple(phase - power_w / 3 for phase in base)
 
+        # Caps apply to total battery power, so they come from the load without the battery.
         max_charge, max_discharge = calculate_phase_power_limits(
-            sim_phases, fuse_limit_amps, phase_headroom_w
+            base, fuse_limit_amps, phase_headroom_w, battery.max_power_w
         )
         step = simulate_dispatch_cycle(
             phase_imports_w=sim_phases,
@@ -109,6 +118,27 @@ def simulate_closed_loop(
         )
         memory = step.memory
         plan = step.plan
+
+        if (
+            net_charge is not None
+            and plan.mode == "idle"
+            and soc_pct < settings.max_soc_pct
+            and max_charge is not None
+            and max_charge > 0
+        ):
+            quarter = int(sample.timestamp.timestamp() // 900)
+            horizon = [sample.electricity_price_eur_kwh] + [
+                quarter_prices[q]
+                for q in range(quarter + 1, quarter + horizon_quarters)
+                if q in quarter_prices
+            ]
+            headroom_kwh = (100 - soc_pct) / 100 * battery.capacity_kwh
+            if should_net_charge(
+                prices_eur_kwh=horizon, headroom_kwh=headroom_kwh, settings=net_charge
+            ):
+                plan = DispatchPlan(
+                    "charge", min(net_charge.charge_power_w, max_charge), "net_charge"
+                )
 
         rows.append(
             {
@@ -138,6 +168,17 @@ def simulate_closed_loop(
     return rows
 
 
+def _quarter_prices(samples: list[ReplaySample]) -> dict[int, float]:
+    """Map each quarter-hour (epoch // 900) in the trace to its price."""
+    prices: dict[int, float] = {}
+    for sample in samples:
+        if sample.electricity_price_eur_kwh is not None:
+            prices.setdefault(
+                int(sample.timestamp.timestamp() // 900), sample.electricity_price_eur_kwh
+            )
+    return prices
+
+
 def _advance_soc(
     soc_pct: float,
     power_w: float,
@@ -152,8 +193,12 @@ def _advance_soc(
     return min(max(new_soc, 0.0), 100.0)
 
 
-def summarize(rows: list[dict[str, float | str]], interval_seconds: float) -> dict[str, float]:
-    """Energy and cost totals; cost values export at the same price as import."""
+def summarize(
+    rows: list[dict[str, float | str]],
+    interval_seconds: float,
+    battery: BatteryModel,
+) -> dict[str, float]:
+    """Energy and cost totals; export is valued at import price, stored energy at the mean price."""
     hours = interval_seconds / 3600
     totals = {
         "base_cost": 0.0,
@@ -180,6 +225,11 @@ def summarize(rows: list[dict[str, float | str]], interval_seconds: float) -> di
     totals["actual_soc_change_pct"] = float(rows[-1]["actual_soc_pct"]) - float(
         rows[0]["actual_soc_pct"]
     )
+    mean_price = sum(float(row["price_eur_kwh"]) for row in rows) / len(rows)
+    kwh_per_soc_pct = battery.capacity_kwh * battery.one_way_efficiency / 100
+    for prefix in ("sim", "actual"):
+        stored_kwh = totals[f"{prefix}_soc_change_pct"] * kwh_per_soc_pct
+        totals[f"{prefix}_cost_soc_adjusted"] = totals[f"{prefix}_cost"] - stored_kwh * mean_price
     return totals
 
 
@@ -191,6 +241,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--one-way-efficiency", type=float, required=True)
     parser.add_argument("--ramp-w-per-s", type=float, required=True)
     parser.add_argument("--max-power-w", type=float, default=10000)
+    parser.add_argument("--net-charge-margin", type=float, help="Min EUR/kWh gain; enables module")
+    parser.add_argument("--net-charge-power-w", type=float, default=10000)
+    parser.add_argument("--round-trip-efficiency", type=float, default=0.92)
+    parser.add_argument("--horizon-quarters", type=int, default=48)
     args = parser.parse_args(argv)
     try:
         tuning = PIDTuning(
@@ -206,15 +260,25 @@ def main(argv: list[str] | None = None) -> int:
             stop_error_w=args.stop_error_w,
         )
         samples = load_trace_csv(args.input_csv)
+        battery = BatteryModel(
+            args.capacity_kwh, args.one_way_efficiency, args.ramp_w_per_s, args.max_power_w
+        )
+        net_charge = (
+            None
+            if args.net_charge_margin is None
+            else NetChargeSettings(
+                args.net_charge_margin, args.round_trip_efficiency, args.net_charge_power_w
+            )
+        )
         rows = simulate_closed_loop(
             samples,
             tuning=tuning,
-            battery=BatteryModel(
-                args.capacity_kwh, args.one_way_efficiency, args.ramp_w_per_s, args.max_power_w
-            ),
+            battery=battery,
             fuse_limit_amps=args.fuse_limit_amps,
             phase_headroom_w=args.phase_headroom_w,
             max_sample_gap_seconds=args.max_sample_gap_seconds,
+            net_charge=net_charge,
+            horizon_quarters=args.horizon_quarters,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=RESULT_COLUMNS)
@@ -224,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(err))
 
     interval = (samples[1].timestamp - samples[0].timestamp).total_seconds()
-    totals = summarize(rows, interval)
+    totals = summarize(rows, interval, battery)
     for key, value in totals.items():
         print(f"{key}: {value:.2f}")
     return 0
