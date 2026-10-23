@@ -11,7 +11,12 @@ from custom_components.nexus_controller.dispatch import (
     DispatchPlan,
     DispatchSettings,
 )
-from custom_components.nexus_controller.net_charge import NetChargeSettings, should_net_charge
+from custom_components.nexus_controller.net_charge import (
+    ExportSettings,
+    NetChargeSettings,
+    should_export_discharge,
+    should_net_charge,
+)
 from custom_components.nexus_controller.utils import calculate_phase_power_limits
 from sim.replay import ReplaySample, _build_parser, load_trace_csv
 
@@ -50,6 +55,7 @@ def simulate_closed_loop(
     phase_headroom_w: float = 1000,
     max_sample_gap_seconds: float = 900,
     net_charge: NetChargeSettings | None = None,
+    export: ExportSettings | None = None,
     horizon_quarters: int = 48,
 ) -> list[dict[str, float | str]]:
     """Run the planner on house load with the recorded battery power removed."""
@@ -119,6 +125,21 @@ def simulate_closed_loop(
         memory = step.memory
         plan = step.plan
 
+        quarter = int(sample.timestamp.timestamp() // 900)
+        horizon = [sample.electricity_price_eur_kwh] + [
+            quarter_prices[q]
+            for q in range(quarter + 1, quarter + horizon_quarters)
+            if q in quarter_prices
+        ]
+        if (
+            export is not None
+            and plan.mode != "charge"
+            and max_discharge is not None
+            and max_discharge > 0
+            and should_export_discharge(prices_eur_kwh=horizon, soc_pct=soc_pct, settings=export)
+        ):
+            plan = DispatchPlan("discharge", min(export.power_w, max_discharge), "export_discharge")
+
         if (
             net_charge is not None
             and plan.mode == "idle"
@@ -126,12 +147,6 @@ def simulate_closed_loop(
             and max_charge is not None
             and max_charge > 0
         ):
-            quarter = int(sample.timestamp.timestamp() // 900)
-            horizon = [sample.electricity_price_eur_kwh] + [
-                quarter_prices[q]
-                for q in range(quarter + 1, quarter + horizon_quarters)
-                if q in quarter_prices
-            ]
             headroom_kwh = (100 - soc_pct) / 100 * battery.capacity_kwh
             if should_net_charge(
                 prices_eur_kwh=horizon, headroom_kwh=headroom_kwh, settings=net_charge
@@ -197,8 +212,10 @@ def summarize(
     rows: list[dict[str, float | str]],
     interval_seconds: float,
     battery: BatteryModel,
+    export_tax_eur_kwh: float = 0.0,
+    cycle_cost_eur_kwh: float = 0.0,
 ) -> dict[str, float]:
-    """Energy and cost totals; export is valued at import price, stored energy at the mean price."""
+    """Energy and cost totals; export earns price minus tax, stored energy uses the mean price."""
     hours = interval_seconds / 3600
     totals = {
         "base_cost": 0.0,
@@ -216,7 +233,8 @@ def summarize(
             ("sim_cost", "sim_net_w"),
             ("actual_cost", "actual_net_w"),
         ):
-            totals[key] += float(row[field]) / 1000 * hours * price
+            net_kwh = float(row[field]) / 1000 * hours
+            totals[key] += net_kwh * (price if net_kwh > 0 else price - export_tax_eur_kwh)
         for prefix in ("sim", "actual"):
             power = float(row[f"{prefix}_battery_w"]) / 1000 * hours
             totals[f"{prefix}_discharge_kwh"] += max(power, 0.0)
@@ -229,7 +247,12 @@ def summarize(
     kwh_per_soc_pct = battery.capacity_kwh * battery.one_way_efficiency / 100
     for prefix in ("sim", "actual"):
         stored_kwh = totals[f"{prefix}_soc_change_pct"] * kwh_per_soc_pct
-        totals[f"{prefix}_cost_soc_adjusted"] = totals[f"{prefix}_cost"] - stored_kwh * mean_price
+        totals[f"{prefix}_cost_soc_adjusted"] = (
+            totals[f"{prefix}_cost"]
+            + totals[f"{prefix}_discharge_kwh"] * cycle_cost_eur_kwh
+            - stored_kwh * mean_price
+        )
+        totals[f"{prefix}_full_cycles"] = totals[f"{prefix}_discharge_kwh"] / battery.capacity_kwh
     return totals
 
 
@@ -245,6 +268,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--net-charge-power-w", type=float, default=10000)
     parser.add_argument("--round-trip-efficiency", type=float, default=0.92)
     parser.add_argument("--horizon-quarters", type=int, default=48)
+    parser.add_argument("--cycle-cost", type=float, default=0.0, help="Wear EUR per kWh discharged")
+    parser.add_argument("--export-tax", type=float, default=0.0, help="EUR per kWh exported")
+    parser.add_argument("--export-margin", type=float, help="Min EUR/kWh gain; enables export")
+    parser.add_argument("--export-reserve-soc", type=float, default=30.0)
+    parser.add_argument("--export-power-w", type=float, default=10000)
     args = parser.parse_args(argv)
     try:
         tuning = PIDTuning(
@@ -267,7 +295,22 @@ def main(argv: list[str] | None = None) -> int:
             None
             if args.net_charge_margin is None
             else NetChargeSettings(
-                args.net_charge_margin, args.round_trip_efficiency, args.net_charge_power_w
+                args.net_charge_margin,
+                args.round_trip_efficiency,
+                args.net_charge_power_w,
+                args.cycle_cost,
+            )
+        )
+        export = (
+            None
+            if args.export_margin is None
+            else ExportSettings(
+                args.export_margin,
+                args.round_trip_efficiency,
+                args.export_tax,
+                args.cycle_cost,
+                args.export_reserve_soc,
+                args.export_power_w,
             )
         )
         rows = simulate_closed_loop(
@@ -278,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
             phase_headroom_w=args.phase_headroom_w,
             max_sample_gap_seconds=args.max_sample_gap_seconds,
             net_charge=net_charge,
+            export=export,
             horizon_quarters=args.horizon_quarters,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
@@ -288,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(err))
 
     interval = (samples[1].timestamp - samples[0].timestamp).total_seconds()
-    totals = summarize(rows, interval, battery)
+    totals = summarize(rows, interval, battery, args.export_tax, args.cycle_cost)
     for key, value in totals.items():
         print(f"{key}: {value:.2f}")
     return 0
