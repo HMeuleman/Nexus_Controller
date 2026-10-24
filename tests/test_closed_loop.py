@@ -23,3 +23,9 @@ def test_expensive_import_is_reduced_by_simulated_discharge():
     assert rows[-1]["sim_battery_w"] > 0
     assert rows[-1]["sim_net_w"] < rows[0]["sim_net_w"] == 3000.0
     assert rows[-1]["sim_soc_pct"] < 50.0
+
+
+def test_initial_soc_overrides_the_recorded_start_value():
+    rows = simulate_closed_loop(_samples(3), tuning=TUNING, battery=BATTERY, initial_soc_pct=35.0)
+
+    assert rows[0]["sim_soc_pct"] == 35.0

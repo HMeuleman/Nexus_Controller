@@ -61,6 +61,7 @@ def simulate_closed_loop(
     dynamic_discharge: DischargeThresholdSettings | None = None,
     horizon_quarters: int = 48,
     slot_seconds: float = 900,
+    initial_soc_pct: float | None = None,
 ) -> list[dict[str, float | str]]:
     """Run the planner on house load with the recorded battery power removed."""
     if len(samples) < 2:
@@ -77,7 +78,7 @@ def simulate_closed_loop(
     rows: list[dict[str, float | str]] = []
     memory = PIDMemory()
     power_w = 0.0  # signed: positive discharges, negative charges
-    soc_pct = samples[0].battery_soc_pct
+    soc_pct = initial_soc_pct if initial_soc_pct is not None else samples[0].battery_soc_pct
     if soc_pct is None:
         raise ValueError("First sample needs a battery SOC")
 
@@ -101,7 +102,6 @@ def simulate_closed_loop(
         if interval > max_sample_gap_seconds:
             memory = PIDMemory()
             power_w = 0.0
-            soc_pct = sample.battery_soc_pct
             interval = 0.0
 
         # Recorded grid minus recorded discharge (split evenly) is the load without any battery.
@@ -300,6 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--slot-seconds", type=float, default=900, help="Length of one price slot")
     parser.add_argument("--charge-price-below", type=float, default=0.15)
+    parser.add_argument(
+        "--initial-soc", type=float, help="Start SOC in percent (default: recorded)"
+    )
     parser.add_argument("--discharge-price-above", type=float, default=0.35)
     parser.add_argument("--cycle-cost", type=float, default=0.0, help="Wear EUR per kWh discharged")
     parser.add_argument("--export-tax", type=float, default=0.0, help="EUR per kWh exported")
@@ -375,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
             dynamic_discharge=dynamic_settings,
             horizon_quarters=args.horizon_quarters,
             slot_seconds=args.slot_seconds,
+            initial_soc_pct=args.initial_soc,
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=RESULT_COLUMNS)

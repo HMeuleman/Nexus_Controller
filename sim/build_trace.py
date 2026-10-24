@@ -77,12 +77,13 @@ def build_rows(
         values = {key: value_at(points[key], times[key], moment) for key in entities}
         if average:
             window_end = moment + timedelta(seconds=interval_seconds)
-            for key in ("l1", "l2", "l3", "pv", "battery"):
-                values[key] = mean_over(points[key], times[key], moment, window_end)
+            for key in ("l1", "l2", "l3", "pv", "pv2", "battery"):
+                if key in entities:
+                    values[key] = mean_over(points[key], times[key], moment, window_end)
         required = ("l1", "l2", "l3", "soc", "price", "battery")
         if all(values[key] is not None for key in required):
             # Unavailable solar means the inverter is offline, which produces nothing.
-            pv = values["pv"] if values["pv"] is not None else 0.0
+            pv = sum(values[key] or 0.0 for key in ("pv", "pv2") if key in entities)
             rows.append(
                 {
                     "timestamp": moment.isoformat(),
@@ -107,6 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--l2", default="sensor.electricity_l2_3")
     parser.add_argument("--l3", default="sensor.electricity_l3_3")
     parser.add_argument("--pv", default="sensor.solaredge_schuur_i2_ac_power")
+    parser.add_argument("--pv2", help="Second solar sensor, summed with --pv")
     parser.add_argument("--soc", default="sensor.solis_battery_soc")
     parser.add_argument(
         "--price", default="sensor.zonneplan_current_quarter_hourly_electricity_tariff"
@@ -142,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
         "price": args.price,
         "battery": args.battery,
     }
+    if args.pv2:
+        entities["pv2"] = args.pv2
     try:
         series = load_series(args.input_csv)
         missing = [entity for entity in entities.values() if entity not in series]

@@ -44,3 +44,19 @@ def test_mean_over_weights_steps_by_duration_and_ignores_unknown_time():
     # 15 min at 100, 15 min at 300, 15 min unknown, 15 min at 500.
     assert result == pytest.approx(300.0)
     assert mean_over(series, times, start - timedelta(hours=2), start - timedelta(hours=1)) is None
+
+
+def test_second_solar_sensor_is_summed_with_the_first():
+    entities = {**ENTITIES, "pv2": "pv2"}
+    series = {key: [*_series(1.0), *_series(1.0, 20)] for key in entities}
+    series["pv"] = [*_series(300.0), *_series(300.0, 20)]
+    series["pv2"] = [*_series(200.0), *_series(None, 10), *_series(200.0, 20)]
+
+    rows = build_rows(
+        series,
+        entities=entities,
+        scales={"grid": 1000, "pv": 1, "battery": 1},
+        interval_seconds=10,
+    )
+
+    assert [row["pv_power_w"] for row in rows] == [500.0, 300.0, 500.0]
