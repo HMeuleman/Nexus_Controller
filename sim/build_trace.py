@@ -100,6 +100,17 @@ def build_rows(
     return rows
 
 
+def drop_ranges(
+    rows: list[dict[str, str | float]], ranges: list[tuple[datetime, datetime]]
+) -> list[dict[str, str | float]]:
+    """Remove rows whose timestamp falls in any [start, end) range."""
+    return [
+        row
+        for row in rows
+        if not any(start <= _parse_timestamp(str(row["timestamp"])) < end for start, end in ranges)
+    ]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_csv", type=Path)
@@ -127,6 +138,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interval-seconds", type=float, default=10)
     parser.add_argument(
         "--average", action="store_true", help="Average power series over each interval"
+    )
+    parser.add_argument(
+        "--exclude",
+        nargs=2,
+        action="append",
+        metavar=("START", "END"),
+        default=[],
+        help="ISO timestamps with timezone; rows in [START, END) are dropped (repeatable)",
     )
     return parser
 
@@ -163,6 +182,9 @@ def main(argv: list[str] | None = None) -> int:
             },
             interval_seconds=args.interval_seconds,
             average=args.average,
+        )
+        rows = drop_ranges(
+            rows, [(_parse_timestamp(start), _parse_timestamp(end)) for start, end in args.exclude]
         )
         with args.output_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.DictWriter(output_file, fieldnames=TRACE_COLUMNS)

@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from sim.build_trace import build_rows, mean_over
+from sim.build_trace import build_rows, drop_ranges, mean_over
 
 START = datetime(2026, 10, 1, tzinfo=UTC)
 ENTITIES = {k: k for k in ("l1", "l2", "l3", "pv", "soc", "price", "battery")}
@@ -60,3 +60,13 @@ def test_second_solar_sensor_is_summed_with_the_first():
     )
 
     assert [row["pv_power_w"] for row in rows] == [500.0, 300.0, 500.0]
+
+
+def test_drop_ranges_removes_rows_in_ranges():
+    rows = [{"timestamp": (START + timedelta(hours=h)).isoformat()} for h in range(5)]
+    result = drop_ranges(rows, [(START + timedelta(hours=1), START + timedelta(hours=3))])
+    assert [r["timestamp"] for r in result] == [
+        rows[0]["timestamp"],
+        rows[3]["timestamp"],
+        rows[4]["timestamp"],
+    ]
