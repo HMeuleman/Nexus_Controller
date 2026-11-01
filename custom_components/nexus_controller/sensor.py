@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ENTITY_LABELS
+from .const import DOMAIN, ENTITY_LABELS, ENTITY_PRECISION
 from .coordinator import NexusCoordinator
 
 
@@ -28,6 +28,7 @@ SENSORS = tuple(
         key=key,
         translation_key=translation_key,
         native_unit_of_measurement=unit,
+        suggested_display_precision=ENTITY_PRECISION.get(key),
         config_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
         has_entity_name=True,

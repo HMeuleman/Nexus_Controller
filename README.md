@@ -6,6 +6,14 @@ An experimental Home Assistant integration for a Zonneplan Nexus battery using t
 
 ## Current status
 
+**Settings as entities (0.5):** strategy settings are number/switch entities (config category), not setup options: reserved room per phase, max charge price, discharge price, minimum desired earnings per kWh (default €0.20, wear included), fallback tax (default €0.11/kWh; the forecast's own tax is used when it provides one), PID gains and deadbands, and a switch for paying exported energy including tax (2026) or without (2027+). Diagnostics add the tax-free price, battery cycles (daily and total), battery earnings (daily; total and stored-energy value are editable and persisted), the detected grid sample interval, and the control status.
+
+**Control is off by default.** The diagnostic switch `Battery control enabled` makes the integration write to the four Solis entities (always off again after a restart; turning it off releases the battery). It needs the net battery power sensor. Test in shadow mode first and verify the units of the Solis power numbers.
+
+Charging from the grid is spread over the cheap slots at the lowest power that still fills the battery, because the inverter is assumed to be more efficient at low power (95 % at 500 W, 85 % at 10 kW). An optional solar forecast sensor (expected remaining kWh) reduces how much is bought.
+
+The text below describes the original read-only scaffold.
+
 This is an early development preview. Setup lets you select net grid power for each phase, up to three optional PV production sensors, battery state of charge, electricity price, and the four Solis charge/discharge switch and power entities. It also configures a fuse limit per phase (default 25 A) and headroom (default 1,000 W per phase). Phase sensors should use positive values for import and negative values for export. The PV diagnostic sensor sums configured sources and normalizes `kW` readings to `W`. With no PV sensors configured it reports `0 W`; a configured PV sensor reporting `unknown` is treated as zero production, even if Home Assistant omits its unit while there is no sun. An `unavailable` sensor, missing entity, malformed reading, or unsupported explicit unit still makes the combined value unknown. Select each sensor only once, and do not combine an aggregate PV sensor with its component sensors.
 
 The diagnostic safe charge/discharge power limits assume the inverter changes all three phases evenly. Each phase limit is based on the least available headroom across the three phase measurements, with an additional total Nexus cap of 10 kW. If any phase measurement is unavailable, both limits are unknown. **This preview does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on these diagnostic limits as a live protection system.

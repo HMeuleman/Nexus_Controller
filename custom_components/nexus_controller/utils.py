@@ -44,6 +44,75 @@ def parse_price_forecast(forecast: object) -> list[tuple[datetime, float]]:
     return sorted(points.items())
 
 
+_TAX_FREE_KEYS = (
+    "price_tax_excluded",
+    "price_excl_tax",
+    "price_tax_free",
+    "electricity_price_excl_tax",
+    "price_without_tax",
+)
+_TAX_KEYS = ("tax", "tax_amount", "price_tax", "electricity_tax")
+
+
+def _amount(raw: object) -> float | None:
+    """Return a EUR/kWh amount from a raw value or an {"amount": ...} dict."""
+    if isinstance(raw, dict):
+        raw = raw.get("amount")
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value * 1e-7 if abs(value) >= 100 else value
+
+
+def parse_forecast_tax(forecast: object) -> dict[datetime, float]:
+    """Return the per-slot tax (EUR/kWh) when the forecast reveals it, else nothing.
+
+    Taxes are derived from a tax-free price or an explicit tax field; slots without
+    either are omitted so the caller can fall back to its configured tax.
+    """
+    if not isinstance(forecast, (list, tuple)):
+        return {}
+    including = dict(parse_price_forecast(forecast))
+    taxes: dict[datetime, float] = {}
+    for entry in forecast:
+        if not isinstance(entry, dict):
+            continue
+        raw_start = entry.get("start_date") or entry.get("datetime")
+        if isinstance(raw_start, str):
+            try:
+                raw_start = datetime.fromisoformat(raw_start.strip().replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        if not isinstance(raw_start, datetime) or raw_start not in including:
+            continue
+        tax = None
+        for key in _TAX_FREE_KEYS:
+            excluded = _amount(entry.get(key))
+            if excluded is not None:
+                tax = including[raw_start] - excluded
+                break
+        if tax is None:
+            for key in _TAX_KEYS:
+                tax = _amount(entry.get(key))
+                if tax is not None:
+                    break
+        if tax is not None and tax >= 0:
+            taxes[raw_start] = tax
+    return taxes
+
+
+def parse_energy_kwh(value: str | None, unit: str | None) -> float | None:
+    """Return an energy state in kWh, or None for unusable values or units."""
+    energy = parse_numeric_state(value)
+    factor = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0}.get((unit or "").casefold())
+    if energy is None or factor is None:
+        return None
+    return energy * factor
+
+
 def parse_numeric_state(value: str | None) -> float | None:
     """Return a finite numeric entity state, or None when it is not usable."""
     if value is None or value in ("unknown", "unavailable"):

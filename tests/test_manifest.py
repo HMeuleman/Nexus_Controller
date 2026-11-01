@@ -69,10 +69,12 @@ def test_translations_include_all_phase_inputs_and_safety_outputs():
         "discharge_enable_entity",
         "discharge_power_entity",
         "fuse_limit_amps",
-        "phase_headroom_watts",
+        "solar_forecast_entity",
     }
     for locale in ("en", "nl"):
         translation = json.loads((translations_path / f"{locale}.json").read_text(encoding="utf-8"))
         assert required_keys <= translation["config"]["step"]["user"]["data"].keys()
         assert "max_charge_power" in translation["entity"]["sensor"]
         assert "max_discharge_power" in translation["entity"]["sensor"]
+        assert "reserved_room_w" in translation["entity"]["number"]
+        assert "control_enabled" in translation["entity"]["switch"]

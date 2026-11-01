@@ -9,33 +9,20 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
-    CONF_BATTERY_CAPACITY,
     CONF_BATTERY_POWER,
     CONF_BATTERY_SOC,
     CONF_CHARGE_ENABLE,
     CONF_CHARGE_POWER,
-    CONF_CHARGE_PRICE_BELOW,
-    CONF_CYCLE_COST,
     CONF_DISCHARGE_ENABLE,
     CONF_DISCHARGE_POWER,
-    CONF_DISCHARGE_PRICE_ABOVE,
     CONF_ELECTRICITY_PRICE,
-    CONF_EXPORT_TAX,
     CONF_FUSE_LIMIT,
     CONF_GRID_POWER_L1,
     CONF_GRID_POWER_L2,
     CONF_GRID_POWER_L3,
-    CONF_MIN_MARGIN,
-    CONF_PHASE_HEADROOM,
     CONF_PRICE_FORECAST,
-    DEFAULT_BATTERY_CAPACITY_KWH,
-    DEFAULT_CHARGE_PRICE_BELOW,
-    DEFAULT_CYCLE_COST,
-    DEFAULT_DISCHARGE_PRICE_ABOVE,
-    DEFAULT_EXPORT_TAX,
+    CONF_SOLAR_FORECAST,
     DEFAULT_FUSE_LIMIT_A,
-    DEFAULT_MIN_MARGIN,
-    DEFAULT_PHASE_HEADROOM_W,
     DOMAIN,
     NAME,
     PHASE_POWER_ENTITIES,
@@ -105,24 +92,8 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         vol.Required(
             CONF_FUSE_LIMIT, default=defaults.get(CONF_FUSE_LIMIT, DEFAULT_FUSE_LIMIT_A)
         ): vol.All(vol.Coerce(float), vol.Range(min=1, max=63)),
-        vol.Required(
-            CONF_PHASE_HEADROOM,
-            default=defaults.get(CONF_PHASE_HEADROOM, DEFAULT_PHASE_HEADROOM_W),
-        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5000)),
     }
-    strategy_defaults = (
-        (CONF_CHARGE_PRICE_BELOW, DEFAULT_CHARGE_PRICE_BELOW, -1.0, 2.0),
-        (CONF_DISCHARGE_PRICE_ABOVE, DEFAULT_DISCHARGE_PRICE_ABOVE, -1.0, 2.0),
-        (CONF_MIN_MARGIN, DEFAULT_MIN_MARGIN, 0.0, 1.0),
-        (CONF_CYCLE_COST, DEFAULT_CYCLE_COST, 0.0, 1.0),
-        (CONF_EXPORT_TAX, DEFAULT_EXPORT_TAX, 0.0, 1.0),
-        (CONF_BATTERY_CAPACITY, DEFAULT_BATTERY_CAPACITY_KWH, 1.0, 100.0),
-    )
-    for key, default, minimum, maximum in strategy_defaults:
-        schema[vol.Optional(key, default=defaults.get(key, default))] = vol.All(
-            vol.Coerce(float), vol.Range(min=minimum, max=maximum)
-        )
-    for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST, CONF_BATTERY_POWER):
+    for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST, CONF_BATTERY_POWER, CONF_SOLAR_FORECAST):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
         else:
@@ -141,10 +112,6 @@ def _validation_error(user_input: dict) -> str | None:
     """Return an error key for invalid input, or None when it is acceptable."""
     if _has_duplicate_entities(user_input):
         return "duplicate_entities"
-    charge_below = user_input.get(CONF_CHARGE_PRICE_BELOW, DEFAULT_CHARGE_PRICE_BELOW)
-    discharge_above = user_input.get(CONF_DISCHARGE_PRICE_ABOVE, DEFAULT_DISCHARGE_PRICE_ABOVE)
-    if charge_below >= discharge_above:
-        return "invalid_price_band"
     return None
 
 
@@ -190,7 +157,12 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                     data_schema=_config_schema(user_input),
                     errors={"base": error},
                 )
-            for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST, CONF_BATTERY_POWER):
+            for key in (
+                *PV_POWER_ENTITIES,
+                CONF_PRICE_FORECAST,
+                CONF_BATTERY_POWER,
+                CONF_SOLAR_FORECAST,
+            ):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)
 

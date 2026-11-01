@@ -3,30 +3,24 @@
     "step": {
       "user": {
         "title": "Nexus Controller",
-        "description": "Positive phase power means grid import; negative means export. Battery commands are not active in this version.",
+        "description": "Positive phase power means grid import; negative means export. Strategy settings are available as entities after setup.",
         "data": {
-          "grid_power_l1_entity": "Net power phase L1 sensor (W; positive import, negative export)",
-          "grid_power_l2_entity": "Net power phase L2 sensor (W; positive import, negative export)",
-          "grid_power_l3_entity": "Net power phase L3 sensor (W; positive import, negative export)",
-          "pv_power_entity": "Solar production sensor",
-          "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
-          "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
-          "battery_soc_entity": "Battery state of charge (SOC) sensor",
+          "grid_power_l1_entity": "Grid power phase L1 sensor (W; positive is import, negative is export)",
+          "grid_power_l2_entity": "Grid power phase L2 sensor (W; positive is import, negative is export)",
+          "grid_power_l3_entity": "Grid power phase L3 sensor (W; positive is import, negative is export)",
+          "pv_power_entity": "Solar power sensor",
+          "pv_power_entity_2": "Additional solar power sensor 2 (optional)",
+          "pv_power_entity_3": "Additional solar power sensor 3 (optional)",
+          "battery_soc_entity": "Battery state of charge sensor",
           "electricity_price_entity": "Electricity price sensor",
-          "price_forecast_entity": "Price forecast sensor (optional; defaults to the price sensor's forecast attribute)",
-          "charge_enable_entity": "Battery charge enable switch",
-          "charge_power_entity": "Battery charge power number",
-          "discharge_enable_entity": "Battery discharge enable switch",
-          "discharge_power_entity": "Battery discharge power number",
+          "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
+          "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
+          "charge_enable_entity": "Battery charge switch",
+          "charge_power_entity": "Battery charge power",
+          "discharge_enable_entity": "Battery discharge switch",
+          "discharge_power_entity": "Battery discharge power",
           "fuse_limit_amps": "Fuse limit per phase (A)",
-          "phase_headroom_watts": "Reserved headroom per phase (W)",
-          "battery_power_entity": "Battery net power sensor (W; positive discharges, negative charges; needed for the shadow proposal, optional)",
-          "charge_price_below": "Charge from the grid when the price is at most (EUR/kWh)",
-          "discharge_price_above": "Cover consumption from the battery when the price is at least (EUR/kWh)",
-          "min_margin_eur_kwh": "Minimum net gain per kWh before trading (EUR/kWh)",
-          "cycle_cost_eur_kwh": "Battery wear per discharged kWh (EUR/kWh)",
-          "export_tax_eur_kwh": "Tax on exported energy (EUR/kWh)",
-          "battery_capacity_kwh": "Usable battery capacity (kWh)"
+          "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
       }
     },
@@ -34,8 +28,7 @@
       "already_configured": "Nexus Controller is already configured."
     },
     "error": {
-      "duplicate_entities": "Select each phase and solar sensor only once.",
-      "invalid_price_band": "The charge price must be lower than the discharge price."
+      "duplicate_entities": "Select each phase and solar sensor only once."
     }
   },
   "options": {
@@ -43,76 +36,74 @@
       "init": {
         "title": "Entity mappings",
         "data": {
-          "grid_power_l1_entity": "Net power phase L1 sensor (W; positive import, negative export)",
-          "grid_power_l2_entity": "Net power phase L2 sensor (W; positive import, negative export)",
-          "grid_power_l3_entity": "Net power phase L3 sensor (W; positive import, negative export)",
-          "pv_power_entity": "Solar production sensor",
-          "pv_power_entity_2": "Additional solar production sensor 2 (optional)",
-          "pv_power_entity_3": "Additional solar production sensor 3 (optional)",
-          "battery_soc_entity": "Battery state of charge (SOC) sensor",
+          "grid_power_l1_entity": "Grid power phase L1 sensor (W; positive is import, negative is export)",
+          "grid_power_l2_entity": "Grid power phase L2 sensor (W; positive is import, negative is export)",
+          "grid_power_l3_entity": "Grid power phase L3 sensor (W; positive is import, negative is export)",
+          "pv_power_entity": "Solar power sensor",
+          "pv_power_entity_2": "Additional solar power sensor 2 (optional)",
+          "pv_power_entity_3": "Additional solar power sensor 3 (optional)",
+          "battery_soc_entity": "Battery state of charge sensor",
           "electricity_price_entity": "Electricity price sensor",
-          "price_forecast_entity": "Price forecast sensor (optional; defaults to the price sensor's forecast attribute)",
-          "charge_enable_entity": "Battery charge enable switch",
-          "charge_power_entity": "Battery charge power number",
-          "discharge_enable_entity": "Battery discharge enable switch",
-          "discharge_power_entity": "Battery discharge power number",
+          "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
+          "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
+          "charge_enable_entity": "Battery charge switch",
+          "charge_power_entity": "Battery charge power",
+          "discharge_enable_entity": "Battery discharge switch",
+          "discharge_power_entity": "Battery discharge power",
           "fuse_limit_amps": "Fuse limit per phase (A)",
-          "phase_headroom_watts": "Reserved headroom per phase (W)",
-          "battery_power_entity": "Battery net power sensor (W; positive discharges, negative charges; needed for the shadow proposal, optional)",
-          "charge_price_below": "Charge from the grid when the price is at most (EUR/kWh)",
-          "discharge_price_above": "Cover consumption from the battery when the price is at least (EUR/kWh)",
-          "min_margin_eur_kwh": "Minimum net gain per kWh before trading (EUR/kWh)",
-          "cycle_cost_eur_kwh": "Battery wear per discharged kWh (EUR/kWh)",
-          "export_tax_eur_kwh": "Tax on exported energy (EUR/kWh)",
-          "battery_capacity_kwh": "Usable battery capacity (kWh)"
+          "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
       }
+    },
+    "error": {
+      "duplicate_entities": "Select each phase and solar sensor only once."
     }
   },
   "entity": {
     "sensor": {
-      "grid_power_l1": {
-        "name": "Net power L1"
-      },
-      "grid_power_l2": {
-        "name": "Net power L2"
-      },
-      "grid_power_l3": {
-        "name": "Net power L3"
-      },
-      "pv_power": {
-        "name": "Solar production"
-      },
-      "battery_soc": {
-        "name": "Battery state of charge (SOC)"
-      },
-      "electricity_price": {
-        "name": "Electricity price"
-      },
-      "max_charge_power": {
-        "name": "Safe maximum charge power"
-      },
-      "max_discharge_power": {
-        "name": "Safe maximum discharge power"
-      },
-      "price_forecast_points": {
-        "name": "Price forecast points"
-      },
-      "forecast_lowest_price": {
-        "name": "Lowest forecast price"
-      },
-      "forecast_highest_price": {
-        "name": "Highest forecast price"
-      },
-      "shadow_mode": {
-        "name": "Shadow proposal: mode"
-      },
-      "shadow_power": {
-        "name": "Shadow proposal: power"
-      },
-      "shadow_reason": {
-        "name": "Shadow proposal: reason"
-      }
+      "grid_power_l1": {"name": "Grid power L1"},
+      "grid_power_l2": {"name": "Grid power L2"},
+      "grid_power_l3": {"name": "Grid power L3"},
+      "pv_power": {"name": "Solar production"},
+      "battery_soc": {"name": "Battery state of charge"},
+      "electricity_price": {"name": "Electricity price"},
+      "max_charge_power": {"name": "Safe maximum charge power"},
+      "max_discharge_power": {"name": "Safe maximum discharge power"},
+      "price_forecast_points": {"name": "Price forecast points"},
+      "forecast_lowest_price": {"name": "Lowest forecast price"},
+      "forecast_highest_price": {"name": "Highest forecast price"},
+      "shadow_mode": {"name": "Shadow proposal: mode"},
+      "shadow_power": {"name": "Shadow proposal: power"},
+      "shadow_reason": {"name": "Shadow proposal: reason"},
+      "price_tax_free": {"name": "Electricity price excluding tax"},
+      "tax_used": {"name": "Tax used"},
+      "cycles_today": {"name": "Battery cycles today"},
+      "cycles_total": {"name": "Battery cycles total"},
+      "earned_today": {"name": "Battery earned today"},
+      "sample_interval": {"name": "Detected grid sample interval"},
+      "avg_daytime_load": {"name": "Average daytime house load"},
+      "solar_surplus_forecast": {"name": "Expected solar surplus"},
+      "control_mode": {"name": "Control: mode"},
+      "control_power": {"name": "Control: power"},
+      "control_status": {"name": "Control: status"}
+    },
+    "number": {
+      "reserved_room_w": {"name": "Reserved room per phase"},
+      "max_charge_price": {"name": "Max price for charging from grid"},
+      "discharge_price_above": {"name": "Cover house load from battery above price"},
+      "min_earnings_per_kwh": {"name": "Minimum desired earnings per kWh"},
+      "tax_per_kwh": {"name": "Tax per kWh (fallback)"},
+      "pid_kp": {"name": "PID proportional gain (at 10 s samples)"},
+      "pid_ki": {"name": "PID integral gain"},
+      "pid_kd": {"name": "PID derivative gain"},
+      "pid_start_error_w": {"name": "PID start deadband"},
+      "pid_stop_error_w": {"name": "PID stop deadband"},
+      "earned_total": {"name": "Battery earned total"},
+      "stored_energy_value": {"name": "Value of stored energy"}
+    },
+    "switch": {
+      "control_enabled": {"name": "Battery control enabled"},
+      "export_includes_tax": {"name": "Exported energy paid including tax"}
     }
   }
 }

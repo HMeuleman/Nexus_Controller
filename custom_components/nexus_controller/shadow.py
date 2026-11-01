@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 
-from .const import MAX_BATTERY_POWER_W
+from .charging import plan_net_charge
+from .const import MAX_BATTERY_POWER_W, MIN_CHARGE_POWER_W
 from .dispatch import DispatchPlan, DispatchSettings, plan_battery_dispatch
 from .net_charge import (
     ExportSettings,
     NetChargeSettings,
     should_export_discharge,
-    should_net_charge,
 )
 from .utils import calculate_phase_power_limits
 
@@ -51,6 +51,9 @@ def propose_shadow_action(
     fuse_limit_amps: float,
     phase_headroom_w: float,
     settings: ShadowSettings,
+    solar_fill_kwh: float = 0.0,
+    first_slot_remaining: float = 1.0,
+    expected_discharge_w: float = 1000.0,
 ) -> DispatchPlan:
     """Return the steady-state action the strategy would take (battery power: discharge positive).
 
@@ -99,13 +102,19 @@ def propose_shadow_action(
 
     if plan.mode == "idle" and soc_pct < settings.dispatch.max_soc_pct and max_charge > 0:
         headroom_kwh = (100 - soc_pct) / 100 * settings.capacity_kwh
-        if should_net_charge(
+        # PV expected to fill the battery for free does not need to be bought.
+        headroom_kwh = max(headroom_kwh - solar_fill_kwh, 0.0)
+        charge = plan_net_charge(
             prices_eur_kwh=horizon,
             headroom_kwh=headroom_kwh,
-            settings=replace(settings.net_charge, slot_hours=slot_hours),
-        ):
-            return DispatchPlan(
-                "charge", min(settings.net_charge.charge_power_w, max_charge), "net_charge"
-            )
+            slot_hours=slot_hours,
+            min_earnings_eur_kwh=settings.net_charge.min_margin_eur_kwh,
+            max_power_w=min(settings.net_charge.charge_power_w, max_charge),
+            discharge_power_w=expected_discharge_w,
+            min_power_w=MIN_CHARGE_POWER_W,
+            first_slot_remaining=first_slot_remaining,
+        )
+        if charge.charge:
+            return DispatchPlan("charge", charge.power_w, "net_charge")
 
     return plan

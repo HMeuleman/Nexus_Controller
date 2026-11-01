@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Nexus Controller",
-        "description": "Positief fasevermogen betekent afname van het net; negatief betekent teruglevering. Batterijcommando's zijn in deze versie nog niet actief.",
+        "description": "Positief fasevermogen betekent afname van het net; negatief betekent teruglevering. Strategie-instellingen zijn na de installatie beschikbaar als entiteiten.",
         "data": {
           "grid_power_l1_entity": "Nettovermogen fase L1-sensor (W; positief is afname, negatief teruglevering)",
           "grid_power_l2_entity": "Nettovermogen fase L2-sensor (W; positief is afname, negatief teruglevering)",
@@ -14,19 +14,13 @@
           "battery_soc_entity": "Sensor voor batterijlaadniveau (SOC)",
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
+          "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
-          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)",
-          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor het schaduwvoorstel, optioneel)",
-          "charge_price_below": "Laden van het net bij een prijs van hoogstens (EUR/kWh)",
-          "discharge_price_above": "Verbruik uit de batterij dekken bij een prijs van minstens (EUR/kWh)",
-          "min_margin_eur_kwh": "Minimale nettowinst per kWh voor handelen (EUR/kWh)",
-          "cycle_cost_eur_kwh": "Slijtage batterij per ontladen kWh (EUR/kWh)",
-          "export_tax_eur_kwh": "Belasting op teruggeleverde energie (EUR/kWh)",
-          "battery_capacity_kwh": "Bruikbare batterijcapaciteit (kWh)"
+          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
       }
     },
@@ -34,8 +28,7 @@
       "already_configured": "Nexus Controller is al geconfigureerd."
     },
     "error": {
-      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer.",
-      "invalid_price_band": "De laadprijs moet lager zijn dan de ontlaadprijs."
+      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
     }
   },
   "options": {
@@ -52,67 +45,65 @@
           "battery_soc_entity": "Sensor voor batterijlaadniveau (SOC)",
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
+          "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
-          "phase_headroom_watts": "Gereserveerde ruimte per fase (W)",
-          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor het schaduwvoorstel, optioneel)",
-          "charge_price_below": "Laden van het net bij een prijs van hoogstens (EUR/kWh)",
-          "discharge_price_above": "Verbruik uit de batterij dekken bij een prijs van minstens (EUR/kWh)",
-          "min_margin_eur_kwh": "Minimale nettowinst per kWh voor handelen (EUR/kWh)",
-          "cycle_cost_eur_kwh": "Slijtage batterij per ontladen kWh (EUR/kWh)",
-          "export_tax_eur_kwh": "Belasting op teruggeleverde energie (EUR/kWh)",
-          "battery_capacity_kwh": "Bruikbare batterijcapaciteit (kWh)"
+          "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
       }
+    },
+    "error": {
+      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
     }
   },
   "entity": {
     "sensor": {
-      "grid_power_l1": {
-        "name": "Nettovermogen L1"
-      },
-      "grid_power_l2": {
-        "name": "Nettovermogen L2"
-      },
-      "grid_power_l3": {
-        "name": "Nettovermogen L3"
-      },
-      "pv_power": {
-        "name": "Zonneproductie"
-      },
-      "battery_soc": {
-        "name": "Batterijlaadniveau (SOC)"
-      },
-      "electricity_price": {
-        "name": "Elektriciteitsprijs"
-      },
-      "max_charge_power": {
-        "name": "Veilig maximaal laadvermogen"
-      },
-      "max_discharge_power": {
-        "name": "Veilig maximaal ontlaadvermogen"
-      },
-      "price_forecast_points": {
-        "name": "Aantal prijsverwachtingen"
-      },
-      "forecast_lowest_price": {
-        "name": "Laagste verwachte prijs"
-      },
-      "forecast_highest_price": {
-        "name": "Hoogste verwachte prijs"
-      },
-      "shadow_mode": {
-        "name": "Schaduwvoorstel: modus"
-      },
-      "shadow_power": {
-        "name": "Schaduwvoorstel: vermogen"
-      },
-      "shadow_reason": {
-        "name": "Schaduwvoorstel: reden"
-      }
+      "grid_power_l1": {"name": "Nettovermogen L1"},
+      "grid_power_l2": {"name": "Nettovermogen L2"},
+      "grid_power_l3": {"name": "Nettovermogen L3"},
+      "pv_power": {"name": "Zonneproductie"},
+      "battery_soc": {"name": "Batterijlaadniveau (SOC)"},
+      "electricity_price": {"name": "Elektriciteitsprijs"},
+      "max_charge_power": {"name": "Veilig maximaal laadvermogen"},
+      "max_discharge_power": {"name": "Veilig maximaal ontlaadvermogen"},
+      "price_forecast_points": {"name": "Aantal prijsverwachtingen"},
+      "forecast_lowest_price": {"name": "Laagste verwachte prijs"},
+      "forecast_highest_price": {"name": "Hoogste verwachte prijs"},
+      "shadow_mode": {"name": "Schaduwvoorstel: modus"},
+      "shadow_power": {"name": "Schaduwvoorstel: vermogen"},
+      "shadow_reason": {"name": "Schaduwvoorstel: reden"},
+      "price_tax_free": {"name": "Elektriciteitsprijs excl. belasting"},
+      "tax_used": {"name": "Gebruikte belasting"},
+      "cycles_today": {"name": "Batterijcycli vandaag"},
+      "cycles_total": {"name": "Batterijcycli totaal"},
+      "earned_today": {"name": "Batterij verdiend vandaag"},
+      "sample_interval": {"name": "Gedetecteerd meetinterval net"},
+      "avg_daytime_load": {"name": "Gemiddeld verbruik overdag"},
+      "solar_surplus_forecast": {"name": "Verwacht zonneoverschot"},
+      "control_mode": {"name": "Sturing: modus"},
+      "control_power": {"name": "Sturing: vermogen"},
+      "control_status": {"name": "Sturing: status"}
+    },
+    "number": {
+      "reserved_room_w": {"name": "Gereserveerde ruimte per fase"},
+      "max_charge_price": {"name": "Maximale prijs voor laden van het net"},
+      "discharge_price_above": {"name": "Verbruik uit batterij dekken boven prijs"},
+      "min_earnings_per_kwh": {"name": "Minimaal gewenste winst per kWh"},
+      "tax_per_kwh": {"name": "Belasting per kWh (terugval)"},
+      "pid_kp": {"name": "PID proportionele versterking (bij 10 s metingen)"},
+      "pid_ki": {"name": "PID integrerende versterking"},
+      "pid_kd": {"name": "PID differentiërende versterking"},
+      "pid_start_error_w": {"name": "PID startdeadband"},
+      "pid_stop_error_w": {"name": "PID stopdeadband"},
+      "earned_total": {"name": "Batterij verdiend totaal"},
+      "stored_energy_value": {"name": "Waarde opgeslagen energie"}
+    },
+    "switch": {
+      "control_enabled": {"name": "Batterijsturing ingeschakeld"},
+      "export_includes_tax": {"name": "Teruglevering vergoed incl. belasting"}
     }
   }
 }
