@@ -216,6 +216,21 @@ def test_forecast_tax_comes_from_a_tax_free_price_or_explicit_tax():
     assert parse_forecast_tax(None) == {}
 
 
+def test_forecast_tax_reads_the_live_zonneplan_quarter_entries():
+    start = datetime(2026, 10, 31, 15, tzinfo=UTC)
+    forecast = [
+        {
+            "start_date": start,
+            "end_date": start + timedelta(minutes=15),
+            "price_tax_included": {"amount": 4493189},
+            "price_tax_excluded": {"amount": 3384708},
+            "sustainability_score": {"permille": 127},
+        }
+    ]
+
+    assert parse_forecast_tax(forecast)[start] == pytest.approx(0.1108481)
+
+
 @pytest.mark.parametrize(
     ("value", "unit", "expected"),
     [("2.5", "kWh", 2.5), ("2500", "Wh", 2.5), ("1", "MWh", 1000), ("2", "kW", None)],
