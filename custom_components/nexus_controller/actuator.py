@@ -17,6 +17,8 @@ POWER_CHANGE_DEADBAND_W = 5.0
 MIN_WRITE_INTERVAL_S = 2.0
 # The Solis falls back to 0 when the power is not rewritten for a few minutes.
 KEEPALIVE_S = 60.0
+# The enable switch may lag behind a write; do not judge it before this has passed.
+SETTLE_S = 15.0
 
 
 class ActuatorError(Exception):
@@ -45,6 +47,7 @@ class BatteryActuator:
         self._mode: DispatchMode | None = None  # None means unknown: force a full sequence
         self._power_w = 0.0
         self._last_write = 0.0
+        self._last_enable = 0.0
 
     async def async_apply(
         self, mode: DispatchMode, power_w: float, *, min_interval_s: float
@@ -55,12 +58,16 @@ class BatteryActuator:
 
         now = time.monotonic()
         if mode == self._mode:
+            enable = self._hass.states.get(self._enable[mode])
+            if enable is not None and enable.state != "on" and now - self._last_enable > SETTLE_S:
+                # The inverter dropped the mode by itself: start it again.
+                await self._async_start(mode, power_w, other_off=False)
+                return "restarted"
+            if now - self._last_enable >= KEEPALIVE_S:
+                # Toggle off/on so the inverter sees a fresh enable, not an unchanged value.
+                await self._async_start(mode, power_w, other_off=False)
+                return "keepalive"
             if abs(power_w - self._power_w) < POWER_CHANGE_DEADBAND_W:
-                if now - self._last_write >= KEEPALIVE_S:
-                    await self._async_set_power(mode, self._power_w)
-                    await self._async_switch(mode, True)
-                    self._last_write = now
-                    return "keepalive"
                 return "holding"
             if now - self._last_write < max(min_interval_s, MIN_WRITE_INTERVAL_S):
                 return "rate_limited"
@@ -68,14 +75,18 @@ class BatteryActuator:
             self._last_write = now
             return "power_updated"
 
-        other = "discharge" if mode == "charge" else "charge"
-        await self._async_switch(other, False)
+        await self._async_start(mode, power_w, other_off=True)
+        return "mode_started"
+
+    async def _async_start(self, mode: str, power_w: float, *, other_off: bool) -> None:
+        """Both modes off (or just this one), set the power, then enable the mode."""
+        if other_off:
+            await self._async_switch("discharge" if mode == "charge" else "charge", False)
         await self._async_switch(mode, False)
         self._power_w = await self._async_set_power(mode, power_w)
         await self._async_switch(mode, True)
-        self._mode = mode
-        self._last_write = now
-        return "mode_started"
+        self._mode = mode  # type: ignore[assignment]
+        self._last_write = self._last_enable = time.monotonic()
 
     async def async_release(self) -> str:
         """Stop forced charging/discharging; safe to call repeatedly."""
