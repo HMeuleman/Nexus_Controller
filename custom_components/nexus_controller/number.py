@@ -19,8 +19,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
+    SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
     SET_MAX_CHARGE_PRICE,
+    SET_MIN_CONTROL_POWER,
     SET_MIN_EARNINGS,
     SET_PID_KD,
     SET_PID_KI,
@@ -43,6 +45,22 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_MIN_CONTROL_POWER,
+        translation_key=SET_MIN_CONTROL_POWER,
+        native_min_value=0,
+        native_max_value=1000,
+        native_step=5,
+        native_unit_of_measurement="W",
+    ),
+    NexusNumberDescription(
+        key=SET_DISCHARGE_OFFSET,
+        translation_key=SET_DISCHARGE_OFFSET,
+        native_min_value=0,
+        native_max_value=500,
+        native_step=5,
+        native_unit_of_measurement="W",
+    ),
     NexusNumberDescription(
         key=SET_RESERVED_ROOM,
         translation_key=SET_RESERVED_ROOM,

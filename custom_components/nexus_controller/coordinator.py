@@ -50,9 +50,11 @@ from .const import (
     PV_POWER_ENTITIES,
     ROUND_TRIP_EFFICIENCY,
     SET_CONTROL_ENABLED,
+    SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
     SET_EXPORT_INCLUDES_TAX,
     SET_MAX_CHARGE_PRICE,
+    SET_MIN_CONTROL_POWER,
     SET_MIN_EARNINGS,
     SET_PID_KD,
     SET_PID_KI,
@@ -463,8 +465,23 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if battery_power is None or None in phases or limits[0] is None or limits[1] is None:
             command, status = DispatchPlan("idle", 0.0, "inputs_unavailable"), "inputs_unavailable"
         elif plan.reason in PID_REASONS:
-            command = self._pid_command(plan, sum(phases), battery_power, limits)
-            status = command.reason
+            # Load without the battery: below the minimum there is nothing worth regulating.
+            base_net = sum(phases) + battery_power
+            minimum = float(self.settings[SET_MIN_CONTROL_POWER])
+            if (plan.mode == "discharge" and base_net < minimum) or (
+                plan.mode == "charge" and base_net > -minimum
+            ):
+                self._pid_memory = PIDMemory()
+                command = DispatchPlan("idle", 0.0, "below_min_control_power")
+                status = command.reason
+            else:
+                # A closed loop cancels any added output, so the offset shifts the setpoint:
+                # discharge settles at this much export instead of zero.
+                offset = (
+                    float(self.settings[SET_DISCHARGE_OFFSET]) if plan.mode == "discharge" else 0.0
+                )
+                command = self._pid_command(plan, sum(phases) + offset, battery_power, limits)
+                status = command.reason
         else:
             self._pid_memory = PIDMemory()
             if plan.mode == "idle":

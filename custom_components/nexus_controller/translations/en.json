@@ -99,6 +99,8 @@
       "pid_kd": {"name": "PID derivative gain"},
       "pid_start_error_w": {"name": "PID start deadband"},
       "pid_stop_error_w": {"name": "PID stop deadband"},
+      "min_control_power_w": {"name": "Minimum power to control (both directions)"},
+      "discharge_offset_w": {"name": "Discharge offset"},
       "earned_total": {"name": "Battery earned total"},
       "stored_energy_value": {"name": "Value of stored energy"}
     },

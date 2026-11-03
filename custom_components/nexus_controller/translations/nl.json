@@ -99,6 +99,8 @@
       "pid_kd": {"name": "PID differentiërende versterking"},
       "pid_start_error_w": {"name": "PID startdeadband"},
       "pid_stop_error_w": {"name": "PID stopdeadband"},
+      "min_control_power_w": {"name": "Minimaal te regelen vermogen (beide richtingen)"},
+      "discharge_offset_w": {"name": "Ontlaad-offset"},
       "earned_total": {"name": "Batterij verdiend totaal"},
       "stored_energy_value": {"name": "Waarde opgeslagen energie"}
     },
