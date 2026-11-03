@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .charging import inverter_efficiency
+
 QUARTER_HOURS = 0.25
 
 
@@ -57,6 +59,45 @@ def should_export_discharge(
         prices_eur_kwh[0] - settings.export_tax_eur_kwh - settings.cycle_cost_eur_kwh - refill_cost
     )
     return gain >= settings.min_margin_eur_kwh
+
+
+def should_export_peak(
+    *,
+    prices_eur_kwh: list[float],
+    soc_pct: float,
+    stored_value_eur_kwh: float,
+    capacity_kwh: float,
+    slot_hours: float,
+    settings: ExportSettings,
+) -> bool:
+    """Decide whether to sell stored energy to the grid in the current slot.
+
+    The price after export tax must beat what the stored energy cost plus the desired
+    earnings. Energy is sold in the dearest slots it can cover at full power, so the
+    current slot qualifies only when it ranks among those.
+    """
+    if (
+        not prices_eur_kwh
+        or not all(math.isfinite(price) for price in prices_eur_kwh)
+        or not all(math.isfinite(v) for v in (soc_pct, stored_value_eur_kwh, capacity_kwh))
+        or soc_pct <= settings.reserve_soc_pct
+        or settings.power_w <= 0
+        or capacity_kwh <= 0
+        or slot_hours <= 0
+    ):
+        return False
+
+    now_price = prices_eur_kwh[0]
+    if now_price - settings.export_tax_eur_kwh < stored_value_eur_kwh + settings.min_margin_eur_kwh:
+        return False
+    available_kwh = (
+        (soc_pct - settings.reserve_soc_pct)
+        / 100
+        * capacity_kwh
+        * inverter_efficiency(settings.power_w)
+    )
+    slots = max(1, math.ceil(available_kwh / (settings.power_w / 1000 * slot_hours)))
+    return now_price >= sorted(prices_eur_kwh, reverse=True)[:slots][-1]
 
 
 def should_net_charge(

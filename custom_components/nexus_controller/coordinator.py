@@ -256,6 +256,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._track(data, now, phases, battery_power)
         solar_fill = self._read_solar(data, now)
         data["sample_interval"] = self.sample_estimator.interval_s
+        data["discharge_threshold"] = self._discharge_threshold()
 
         plan = self._plan(data, now, battery_power, solar_fill)
         await self._async_control(data, plan, phases, battery_power, limits)
@@ -381,11 +382,19 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             solar_fill_kwh=solar_fill,
             first_slot_remaining=remaining,
             expected_discharge_w=max(load or 0.0, 500.0),
+            stored_value_eur_kwh=self.tracker.state.stored_value,
         )
         data["shadow_mode"] = plan.mode
         data["shadow_power"] = plan.power_w
         data["shadow_reason"] = plan.reason
         return plan
+
+    def _discharge_threshold(self) -> float:
+        """Price from which stored energy is worth spending: its cost plus desired earnings."""
+        threshold = self.tracker.state.stored_value + float(self.settings[SET_MIN_EARNINGS])
+        floor = float(self.settings[SET_DISCHARGE_PRICE_ABOVE])
+        # Dispatch requires the discharge threshold to stay above the charge threshold.
+        return max(threshold, floor, float(self.settings[SET_MAX_CHARGE_PRICE]) + 0.01)
 
     def _shadow_settings(self, tax: float) -> ShadowSettings:
         """Build strategy settings; min earnings already includes any battery wear."""
@@ -394,7 +403,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         return ShadowSettings(
             dispatch=DispatchSettings(
                 charge_price_below=float(self.settings[SET_MAX_CHARGE_PRICE]),
-                discharge_price_above=float(self.settings[SET_DISCHARGE_PRICE_ABOVE]),
+                discharge_price_above=self._discharge_threshold(),
                 min_soc_pct=MIN_SOC_PCT,
                 max_soc_pct=100.0,
             ),

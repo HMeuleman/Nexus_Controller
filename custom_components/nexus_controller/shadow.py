@@ -13,6 +13,7 @@ from .net_charge import (
     ExportSettings,
     NetChargeSettings,
     should_export_discharge,
+    should_export_peak,
 )
 from .utils import calculate_phase_power_limits
 
@@ -54,6 +55,7 @@ def propose_shadow_action(
     solar_fill_kwh: float = 0.0,
     first_slot_remaining: float = 1.0,
     expected_discharge_w: float = 1000.0,
+    stored_value_eur_kwh: float | None = None,
 ) -> DispatchPlan:
     """Return the steady-state action the strategy would take (battery power: discharge positive).
 
@@ -89,13 +91,20 @@ def propose_shadow_action(
     )
 
     horizon = [price, *upcoming_prices]
-    if (
-        plan.mode != "charge"
-        and max_discharge > 0
-        and should_export_discharge(
+    if stored_value_eur_kwh is None:
+        export_ok = should_export_discharge(
             prices_eur_kwh=horizon, soc_pct=soc_pct, settings=settings.export
         )
-    ):
+    else:
+        export_ok = should_export_peak(
+            prices_eur_kwh=horizon,
+            soc_pct=soc_pct,
+            stored_value_eur_kwh=stored_value_eur_kwh,
+            capacity_kwh=settings.capacity_kwh,
+            slot_hours=slot_hours,
+            settings=settings.export,
+        )
+    if plan.mode != "charge" and max_discharge > 0 and export_ok:
         return DispatchPlan(
             "discharge", min(settings.export.power_w, max_discharge), "export_discharge"
         )

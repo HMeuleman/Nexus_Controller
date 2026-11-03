@@ -81,6 +81,7 @@
       "cycles_total": {"name": "Battery cycles total"},
       "earned_today": {"name": "Battery earned today"},
       "sample_interval": {"name": "Detected grid sample interval"},
+      "discharge_threshold": {"name": "Price from which the battery covers house load"},
       "avg_daytime_load": {"name": "Average daytime house load"},
       "solar_surplus_forecast": {"name": "Expected solar surplus"},
       "control_mode": {"name": "Control: mode"},
@@ -90,7 +91,7 @@
     "number": {
       "reserved_room_w": {"name": "Reserved room per phase"},
       "max_charge_price": {"name": "Max price for charging from grid"},
-      "discharge_price_above": {"name": "Cover house load from battery above price"},
+      "discharge_price_above": {"name": "Minimum price for covering house load (floor)"},
       "min_earnings_per_kwh": {"name": "Minimum desired earnings per kWh"},
       "tax_per_kwh": {"name": "Tax per kWh (fallback)"},
       "pid_kp": {"name": "PID proportional gain (at 10 s samples)"},

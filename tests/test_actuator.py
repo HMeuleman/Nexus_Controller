@@ -44,4 +44,7 @@ def test_unchanged_power_is_rewritten_after_the_keepalive_interval(monkeypatch):
 
     clock[0] += 31
     assert asyncio.run(actuator.async_apply("discharge", 1235, min_interval_s=10)) == "keepalive"
-    assert _calls(hass) == [("number", "set_value", {"entity_id": "number.dp", "value": 1230})]
+    assert _calls(hass) == [
+        ("number", "set_value", {"entity_id": "number.dp", "value": 1230}),
+        ("switch", "turn_on", {"entity_id": "switch.d"}),
+    ]

@@ -81,6 +81,7 @@
       "cycles_total": {"name": "Batterijcycli totaal"},
       "earned_today": {"name": "Batterij verdiend vandaag"},
       "sample_interval": {"name": "Gedetecteerd meetinterval net"},
+      "discharge_threshold": {"name": "Prijs vanaf waar de batterij het huisverbruik dekt"},
       "avg_daytime_load": {"name": "Gemiddeld verbruik overdag"},
       "solar_surplus_forecast": {"name": "Verwacht zonneoverschot"},
       "control_mode": {"name": "Sturing: modus"},
@@ -90,7 +91,7 @@
     "number": {
       "reserved_room_w": {"name": "Gereserveerde ruimte per fase"},
       "max_charge_price": {"name": "Maximale prijs voor laden van het net"},
-      "discharge_price_above": {"name": "Verbruik uit batterij dekken boven prijs"},
+      "discharge_price_above": {"name": "Minimale prijs voor dekken huisverbruik (ondergrens)"},
       "min_earnings_per_kwh": {"name": "Minimaal gewenste winst per kWh"},
       "tax_per_kwh": {"name": "Belasting per kWh (terugval)"},
       "pid_kp": {"name": "PID proportionele versterking (bij 10 s metingen)"},

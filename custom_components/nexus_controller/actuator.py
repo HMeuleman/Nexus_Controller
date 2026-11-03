@@ -57,6 +57,7 @@ class BatteryActuator:
             if abs(power_w - self._power_w) < POWER_CHANGE_DEADBAND_W:
                 if now - self._last_write >= KEEPALIVE_S:
                     await self._async_set_power(mode, self._power_w)
+                    await self._async_switch(mode, True)
                     self._last_write = now
                     return "keepalive"
                 return "holding"

@@ -62,7 +62,7 @@ DEFAULT_FUSE_LIMIT_A: Final = 25
 SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_RESERVED_ROOM: 1_000.0,
     SET_MAX_CHARGE_PRICE: 0.15,
-    SET_DISCHARGE_PRICE_ABOVE: 0.25,
+    SET_DISCHARGE_PRICE_ABOVE: 0.0,
     SET_MIN_EARNINGS: 0.20,
     SET_TAX: 0.11,
     # Conservative until tuned on the real inverter: the offline sim assumed an ideal plant.
@@ -107,6 +107,7 @@ SENSOR_ENTITIES: Final = (
     "cycles_total",
     "earned_today",
     "sample_interval",
+    "discharge_threshold",
     "avg_daytime_load",
     "solar_surplus_forecast",
     "control_mode",
@@ -135,6 +136,7 @@ ENTITY_LABELS: Final = {
     "cycles_total": ("cycles_total", None),
     "earned_today": ("earned_today", "EUR"),
     "sample_interval": ("sample_interval", "s"),
+    "discharge_threshold": ("discharge_threshold", "€/kWh"),
     "avg_daytime_load": ("avg_daytime_load", "W"),
     "solar_surplus_forecast": ("solar_surplus_forecast", "kWh"),
     "control_mode": ("control_mode", None),
@@ -149,6 +151,7 @@ ENTITY_PRECISION: Final = {
     "cycles_total": 2,
     "earned_today": 2,
     "sample_interval": 1,
+    "discharge_threshold": 3,
     "avg_daytime_load": 0,
     "solar_surplus_forecast": 1,
 }
