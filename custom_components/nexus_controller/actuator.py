@@ -14,6 +14,8 @@ _LOGGER = logging.getLogger(__name__)
 
 POWER_CHANGE_DEADBAND_W = 25.0
 MIN_WRITE_INTERVAL_S = 2.0
+# The Solis falls back to 0 when the power is not rewritten for a few minutes.
+KEEPALIVE_S = 60.0
 
 
 class ActuatorError(Exception):
@@ -53,6 +55,10 @@ class BatteryActuator:
         now = time.monotonic()
         if mode == self._mode:
             if abs(power_w - self._power_w) < POWER_CHANGE_DEADBAND_W:
+                if now - self._last_write >= KEEPALIVE_S:
+                    await self._async_set_power(mode, self._power_w)
+                    self._last_write = now
+                    return "keepalive"
                 return "holding"
             if now - self._last_write < max(min_interval_s, MIN_WRITE_INTERVAL_S):
                 return "rate_limited"
