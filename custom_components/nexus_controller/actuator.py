@@ -12,7 +12,8 @@ from .dispatch import DispatchMode
 
 _LOGGER = logging.getLogger(__name__)
 
-POWER_CHANGE_DEADBAND_W = 25.0
+# Must stay well below the PID step (kp x error), or small corrections never get written.
+POWER_CHANGE_DEADBAND_W = 5.0
 MIN_WRITE_INTERVAL_S = 2.0
 # The Solis falls back to 0 when the power is not rewritten for a few minutes.
 KEEPALIVE_S = 60.0
