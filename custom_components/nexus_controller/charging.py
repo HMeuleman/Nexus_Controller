@@ -16,6 +16,7 @@ EFFICIENCY_TABLE = (
     (7_500.0, 0.975, 0.984),
     (10_000.0, 0.9575, 0.9675),
 )
+BEST_POWER_W = 7_500.0
 
 
 def inverter_efficiency(power_w: float, *, pv_share: float = 0.0) -> float:
@@ -58,15 +59,17 @@ def plan_net_charge(
     discharge_power_w: float,
     min_power_w: float,
     first_slot_remaining: float = 1.0,
+    export_tax_eur_kwh: float | None = None,
 ) -> ChargePlan:
     """Plan grid charging over the cheap slots that gives the largest total profit.
 
     `prices_eur_kwh` starts with the current slot. The energy to store is spread over the
     `m` cheapest slots, each paired with one of the dearest later slots, and every pair
-    must still earn `min_earnings_eur_kwh` after conversion losses. Efficiency peaks at a
-    mid power, so the best `m` is the one with the highest profit, not simply the lowest
-    power. Without a fully profitable spread it charges at full power in the profitable
-    slots only.
+    must still earn `min_earnings_eur_kwh` after conversion losses. Stored energy is sold
+    the better way: to the house at `discharge_power_w`, or, when `export_tax_eur_kwh` is
+    given, to the grid at a power that spreads it over the dear slots. Efficiency peaks at
+    a mid power, so the most profitable (slots, power) wins, possibly filling only part of
+    the headroom.
     """
     if (
         not prices_eur_kwh
@@ -83,48 +86,51 @@ def plan_net_charge(
     frac = min(max(first_slot_remaining, 0.05), 1.0)
     cheapest = sorted(prices_eur_kwh)
     dearest = sorted(prices_eur_kwh[1:], reverse=True)
-    discharge_eff = inverter_efficiency(discharge_power_w)
+    house_eff = inverter_efficiency(discharge_power_w)
+    low_power = min(min_power_w, max_power_w)
 
-    def power_for(slots: int) -> float:
-        # Slot time counts the unfinished current slot only partially.
-        hours = (slots - 1 + frac) * slot_hours
+    def sale_value(dear: float, share_kwh: float) -> tuple[float, float]:
+        """Return (EUR per stored kWh, discharge efficiency) for the better sales route."""
+        best = (dear * house_eff, house_eff)
+        if export_tax_eur_kwh is not None:
+            power = min(max(share_kwh / slot_hours * 1000, low_power), max_power_w)
+            export_eff = inverter_efficiency(power)
+            export = ((dear - export_tax_eur_kwh) * export_eff, export_eff)
+            best = max(best, export)
+        return best
+
+    def fill_power(slots: int, hours: float) -> float:
         power = headroom_kwh / hours * 1000
         for _ in range(3):
             power = headroom_kwh / inverter_efficiency(power) / hours * 1000
         return power
 
-    best: tuple[float, int, float, float] | None = None  # profit, slots, power, round trip
+    best_plan: tuple[float, int, float, float] | None = None  # profit, slots, power, round trip
     for slots in range(min(len(cheapest), len(dearest)), 0, -1):
-        power = power_for(slots)
-        if power > max_power_w or power < min_power_w:
-            continue
-        charge_eff = inverter_efficiency(power)
-        pairs = list(zip(cheapest[:slots], dearest, strict=False))
-        if any(
-            dear * charge_eff * discharge_eff - cheap < min_earnings_eur_kwh
-            for cheap, dear in pairs
-        ):
-            continue
-        share = headroom_kwh / slots
-        profit = sum(share * (dear * discharge_eff - cheap / charge_eff) for cheap, dear in pairs)
-        if best is None or profit > best[0] + 1e-9:
-            best = (profit, slots, power, charge_eff * discharge_eff)
-    if best is not None:
-        _, slots, power, round_trip = best
-        return _plan(prices_eur_kwh[0], cheapest, slots, power, round_trip)
+        # The unfinished current slot only counts partially.
+        hours = (slots - 1 + frac) * slot_hours
+        full = fill_power(slots, hours)
+        candidates = {min(max(full, low_power), max_power_w)}
+        if full > BEST_POWER_W:
+            candidates.add(min(BEST_POWER_W, max_power_w))
+        for power in candidates:
+            charge_eff = inverter_efficiency(power)
+            stored = min(headroom_kwh, power / 1000 * hours * charge_eff)
+            if stored <= 0:
+                continue
+            share = stored / slots
+            sales = [sale_value(dear, share) for dear in dearest[:slots]]
+            pairs = list(zip(cheapest[:slots], sales, strict=False))
+            if any(
+                value * charge_eff - cheap < min_earnings_eur_kwh for cheap, (value, _) in pairs
+            ):
+                continue
+            profit = sum(share * (value - cheap / charge_eff) for cheap, (value, _) in pairs)
+            if best_plan is None or profit > best_plan[0] + 1e-9:
+                round_trip = charge_eff * sum(eff for _, (_, eff) in pairs) / slots
+                best_plan = (profit, slots, power, round_trip)
 
-    # Not enough profitable slots for a full charge: use the profitable ones at full power.
-    round_trip = inverter_efficiency(max_power_w) * discharge_eff
-    count = 0
-    for cheap, dear in zip(cheapest, dearest, strict=False):
-        if dear * round_trip - cheap < min_earnings_eur_kwh:
-            break
-        count += 1
-    if count == 0:
+    if best_plan is None:
         return NO_CHARGE
-    return _plan(prices_eur_kwh[0], cheapest, count, max_power_w, round_trip)
-
-
-def _plan(current: float, cheapest: list[float], slots: int, power: float, rt: float) -> ChargePlan:
-    """Charge now only when the current slot is one of the chosen cheapest slots."""
-    return ChargePlan(current <= cheapest[slots - 1], power, slots, rt)
+    _, slots, power, round_trip = best_plan
+    return ChargePlan(prices_eur_kwh[0] <= cheapest[slots - 1], power, slots, round_trip)

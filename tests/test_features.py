@@ -43,6 +43,20 @@ def test_charge_goes_to_the_efficient_mid_power_not_the_lowest():
     assert 4800 < plan.power_w < 5400
 
 
+def test_selling_to_the_grid_at_mid_power_makes_a_small_spread_pay():
+    prices = [0.3486, 0.5577, 0.52, 0.50, 0.45]
+    plan = {**PLAN, "discharge_power_w": 500.0, "min_earnings_eur_kwh": 0.15}
+
+    house_only = plan_net_charge(prices_eur_kwh=prices, headroom_kwh=5.0, **plan)
+    with_export = plan_net_charge(
+        prices_eur_kwh=prices, headroom_kwh=5.0, export_tax_eur_kwh=0.0, **plan
+    )
+
+    assert not house_only.charge
+    assert with_export.charge
+    assert 4500 < with_export.power_w < 7600
+
+
 def test_expensive_current_slot_does_not_charge():
     prices = [0.60, 0.10, 0.10, 0.10, 0.60]
 

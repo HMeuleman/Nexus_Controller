@@ -122,6 +122,7 @@ def propose_shadow_action(
             discharge_power_w=expected_discharge_w,
             min_power_w=MIN_CHARGE_POWER_W,
             first_slot_remaining=first_slot_remaining,
+            export_tax_eur_kwh=settings.export.export_tax_eur_kwh,
         )
         if charge.charge:
             return DispatchPlan("charge", charge.power_w, "net_charge")
