@@ -41,6 +41,10 @@ SET_PID_KD: Final = "pid_kd"
 SET_PID_START_ERROR: Final = "pid_start_error_w"
 SET_PID_STOP_ERROR: Final = "pid_stop_error_w"
 SET_MIN_CONTROL_POWER: Final = "min_control_power_w"
+SET_MIN_DISCHARGE_SOC: Final = "min_discharge_soc"
+SET_MANUAL_TIMEOUT: Final = "manual_timeout_min"
+MANUAL_CHARGE: Final = "manual_charge"
+MANUAL_DISCHARGE: Final = "manual_discharge"
 SET_DISCHARGE_OFFSET: Final = "discharge_offset_w"
 SET_EXPORT_INCLUDES_TAX: Final = "export_includes_tax"
 SET_CONTROL_ENABLED: Final = "control_enabled"
@@ -73,8 +77,10 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_PID_KD: 0.0,
     SET_PID_START_ERROR: 15.0,
     SET_PID_STOP_ERROR: 8.0,
-    SET_MIN_CONTROL_POWER: 50.0,
-    SET_DISCHARGE_OFFSET: 35.0,
+    SET_MIN_CONTROL_POWER: 100.0,
+    SET_DISCHARGE_OFFSET: 50.0,
+    SET_MIN_DISCHARGE_SOC: 10.0,
+    SET_MANUAL_TIMEOUT: 30.0,
     SET_EXPORT_INCLUDES_TAX: False,
     SET_CONTROL_ENABLED: False,
 }

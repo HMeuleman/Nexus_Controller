@@ -101,11 +101,15 @@
       "pid_stop_error_w": {"name": "PID stop deadband"},
       "min_control_power_w": {"name": "Minimum power to control (both directions)"},
       "discharge_offset_w": {"name": "Discharge offset"},
+      "min_discharge_soc": {"name": "Minimum SOC to allow discharge"},
+      "manual_timeout_min": {"name": "Manual override timeout"},
       "earned_total": {"name": "Battery earned total"},
       "stored_energy_value": {"name": "Value of stored energy"}
     },
     "switch": {
       "control_enabled": {"name": "Battery control enabled"},
+      "manual_charge": {"name": "Manual maximum charge"},
+      "manual_discharge": {"name": "Manual maximum discharge"},
       "export_includes_tax": {"name": "Exported energy paid including tax"}
     }
   }

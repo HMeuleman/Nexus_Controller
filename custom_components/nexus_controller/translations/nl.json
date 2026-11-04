@@ -101,11 +101,15 @@
       "pid_stop_error_w": {"name": "PID stopdeadband"},
       "min_control_power_w": {"name": "Minimaal te regelen vermogen (beide richtingen)"},
       "discharge_offset_w": {"name": "Ontlaad-offset"},
+      "min_discharge_soc": {"name": "Minimale SOC om te ontladen"},
+      "manual_timeout_min": {"name": "Time-out handmatige bediening"},
       "earned_total": {"name": "Batterij verdiend totaal"},
       "stored_energy_value": {"name": "Waarde opgeslagen energie"}
     },
     "switch": {
       "control_enabled": {"name": "Batterijsturing ingeschakeld"},
+      "manual_charge": {"name": "Handmatig maximaal laden"},
+      "manual_discharge": {"name": "Handmatig maximaal ontladen"},
       "export_includes_tax": {"name": "Teruglevering vergoed incl. belasting"}
     }
   }

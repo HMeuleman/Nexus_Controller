@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -43,7 +44,6 @@ from .const import (
     LEGACY_MIN_MARGIN,
     LEGACY_PHASE_HEADROOM,
     MAX_BATTERY_POWER_W,
-    MIN_SOC_PCT,
     PHASE_POWER_ENTITIES,
     PID_FILTER_ALPHA,
     PID_INTEGRAL_LIMIT_WS,
@@ -53,8 +53,10 @@ from .const import (
     SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
     SET_EXPORT_INCLUDES_TAX,
+    SET_MANUAL_TIMEOUT,
     SET_MAX_CHARGE_PRICE,
     SET_MIN_CONTROL_POWER,
+    SET_MIN_DISCHARGE_SOC,
     SET_MIN_EARNINGS,
     SET_PID_KD,
     SET_PID_KI,
@@ -120,6 +122,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._settle_cancel: CALLBACK_TYPE | None = None
         self._last_time: datetime | None = None
+        self._manual_mode: str | None = None
+        self._manual_until = 0.0
 
     def _initial_settings(self) -> dict[str, float | bool]:
         """Defaults, seeded from the pre-0.5 config options so upgrades keep their tuning."""
@@ -176,7 +180,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if not self.sample_estimator.observe(time.monotonic()):
             return
         self._grid_samples += 1
-        if self.settings[SET_CONTROL_ENABLED] and self._settle_cancel is None:
+        if (
+            self.settings[SET_CONTROL_ENABLED] or self._manual_mode
+        ) and self._settle_cancel is None:
             self._settle_cancel = async_call_later(self.hass, PHASE_SETTLE_S, self._on_settled)
 
     @callback
@@ -197,9 +203,54 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             self._controlled_samples = self._grid_samples - 1
             await self.async_refresh()
         else:
+            self._manual_mode = None
             await self._async_release()
             self._control_status = "disabled"
             await self.async_refresh()
+
+    @property
+    def manual_mode(self) -> str | None:
+        """The active manual override ("charge" or "discharge"), if any."""
+        return self._manual_mode
+
+    async def async_set_manual(self, mode: str, enabled: bool) -> None:
+        """Start or stop a time-limited maximum charge/discharge; the modes exclude each other."""
+        if enabled:
+            if self._manual_mode not in (None, mode):
+                raise ServiceValidationError("Stop the other manual override first")
+            minutes = float(self.settings[SET_MANUAL_TIMEOUT])
+            self._manual_mode = mode
+            self._manual_until = time.monotonic() + minutes * 60
+            self._pid_memory = PIDMemory()
+            self._controlled_samples = self._grid_samples - 1
+        elif self._manual_mode == mode:
+            await self._async_end_manual("manual_stopped")
+        await self.async_refresh()
+
+    async def _async_end_manual(self, reason: str) -> None:
+        """Clear the override and hand the battery back unless automatic control is on."""
+        self._manual_mode = None
+        self._control_status = reason
+        if not self.settings[SET_CONTROL_ENABLED]:
+            await self._async_release()
+
+    async def _manual_command(
+        self, data: dict[str, float | str | None], limits: tuple[float | None, float | None]
+    ) -> tuple[DispatchPlan, str]:
+        """Maximum power in the chosen direction, within the SOC and phase limits."""
+        mode = self._manual_mode
+        soc = data.get(CONF_BATTERY_SOC)
+        if mode is None or not isinstance(soc, float) or None in limits:
+            return DispatchPlan("idle", 0.0, "inputs_unavailable"), "inputs_unavailable"
+        if mode == "discharge" and soc <= float(self.settings[SET_MIN_DISCHARGE_SOC]):
+            await self._async_end_manual("manual_soc_limit")
+            return DispatchPlan("idle", 0.0, "manual_soc_limit"), "manual_soc_limit"
+        if mode == "charge" and soc >= 100.0:
+            await self._async_end_manual("manual_soc_limit")
+            return DispatchPlan("idle", 0.0, "manual_soc_limit"), "manual_soc_limit"
+        limit = limits[1] if mode == "discharge" else limits[0]
+        power = min(limit or 0.0, MAX_BATTERY_POWER_W)
+        return DispatchPlan(mode, power, "manual_override"), "manual_override"  # type: ignore[arg-type]
 
     async def _async_update_data(self) -> dict[str, float | str | None]:
         async with self._lock:
@@ -406,7 +457,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             dispatch=DispatchSettings(
                 charge_price_below=float(self.settings[SET_MAX_CHARGE_PRICE]),
                 discharge_price_above=self._discharge_threshold(),
-                min_soc_pct=MIN_SOC_PCT,
+                min_soc_pct=float(self.settings[SET_MIN_DISCHARGE_SOC]),
                 max_soc_pct=100.0,
             ),
             net_charge=NetChargeSettings(earnings, ROUND_TRIP_EFFICIENCY, MAX_BATTERY_POWER_W),
@@ -415,7 +466,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 ROUND_TRIP_EFFICIENCY,
                 export_tax,
                 0.0,
-                EXPORT_RESERVE_SOC_PCT,
+                max(EXPORT_RESERVE_SOC_PCT, float(self.settings[SET_MIN_DISCHARGE_SOC])),
                 MAX_BATTERY_POWER_W,
             ),
             capacity_kwh=BATTERY_CAPACITY_KWH,
@@ -451,8 +502,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         """Turn the plan into a command when control is enabled and a fresh grid sample exists."""
         data["control_mode"] = "idle"
         data["control_power"] = 0.0
-        if not self.settings[SET_CONTROL_ENABLED]:
-            data["control_status"] = "disabled"
+        if self._manual_mode and time.monotonic() >= self._manual_until:
+            await self._async_end_manual("manual_timeout")
+        if not self.settings[SET_CONTROL_ENABLED] and self._manual_mode is None:
+            data["control_status"] = self._control_status if self._control_was_on else "disabled"
             return
         if self._controlled_samples == self._grid_samples:
             data["control_status"] = self._control_status
@@ -462,7 +515,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
         command = plan
         status = "ok"
-        if battery_power is None or None in phases or limits[0] is None or limits[1] is None:
+        if self._manual_mode:
+            command, status = await self._manual_command(data, limits)
+        elif battery_power is None or None in phases or limits[0] is None or limits[1] is None:
             command, status = DispatchPlan("idle", 0.0, "inputs_unavailable"), "inputs_unavailable"
         elif plan.reason in PID_REASONS:
             # Load without the battery: below the minimum there is nothing worth regulating.
@@ -497,6 +552,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         except ActuatorError as err:
             _LOGGER.error("Battery control stopped: %s", err)
             self.settings[SET_CONTROL_ENABLED] = False
+            self._manual_mode = None
             await self._async_release()
             self._control_status = f"error: {err}"
             data["control_status"] = self._control_status

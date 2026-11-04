@@ -23,21 +23,24 @@ PLAN = {
 }
 
 
-def test_efficiency_falls_with_power():
-    assert inverter_efficiency(500) == pytest.approx(0.95)
-    assert inverter_efficiency(10000) == pytest.approx(0.85)
-    assert inverter_efficiency(100) == pytest.approx(0.95)
-    assert inverter_efficiency(5250) == pytest.approx(0.90)
+def test_efficiency_follows_the_measured_curve():
+    assert inverter_efficiency(500) == pytest.approx(0.875)
+    assert inverter_efficiency(100) == pytest.approx(0.85)
+    assert inverter_efficiency(1500) == pytest.approx(0.9175)
+    assert inverter_efficiency(6000) == pytest.approx(0.975)
+    assert inverter_efficiency(10000) == pytest.approx(0.9575)
+    assert inverter_efficiency(500, pv_share=1.0) == pytest.approx(0.90)
+    assert inverter_efficiency(-5000) == pytest.approx(0.975)
 
 
-def test_charge_is_spread_over_all_cheap_slots_at_low_power():
+def test_charge_goes_to_the_efficient_mid_power_not_the_lowest():
     prices = [0.10, 0.10, 0.10, 0.60, 0.60, 0.60]
 
     plan = plan_net_charge(prices_eur_kwh=prices, headroom_kwh=10.0, **PLAN)
 
     assert plan.charge
-    assert plan.slots == 3
-    assert 3300 < plan.power_w < 3900  # about 10 kWh over 3 h, plus conversion losses
+    assert plan.slots == 2  # 10 kWh in 3 slots would be ~3.5 kW, 2 slots is ~5.1 kW and better
+    assert 4800 < plan.power_w < 5400
 
 
 def test_expensive_current_slot_does_not_charge():
@@ -63,14 +66,15 @@ def test_partial_fill_uses_full_power_in_the_profitable_slot_only():
     assert plan.power_w <= 10000
 
 
-def test_unfinished_current_slot_raises_the_needed_power():
+def test_unfinished_current_slot_makes_the_plan_use_more_slots():
     prices = [0.10, 0.10, 0.10, 0.60, 0.60, 0.60]
     full = plan_net_charge(prices_eur_kwh=prices, headroom_kwh=6.0, **PLAN)
     late = plan_net_charge(
         prices_eur_kwh=prices, headroom_kwh=6.0, first_slot_remaining=0.25, **PLAN
     )
 
-    assert late.power_w > full.power_w
+    assert late.charge
+    assert late.slots > full.slots
 
 
 def test_tracker_counts_cycles_per_soc_gain_and_resets_daily():

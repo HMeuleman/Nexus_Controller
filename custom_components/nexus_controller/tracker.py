@@ -111,7 +111,7 @@ class BatteryTracker:
         energy_kwh = power_w / 1000 * hours
         grid_share = min(max(grid_import_w, 0.0), power_w) / power_w
         cost = energy_kwh * (grid_share * import_price + (1 - grid_share) * export_price)
-        stored_kwh = energy_kwh * inverter_efficiency(power_w)
+        stored_kwh = energy_kwh * inverter_efficiency(power_w, pv_share=1 - grid_share)
         inventory = max((previous_soc or 0.0) / 100 * self.capacity_kwh, MIN_INVENTORY_KWH)
         self.state.stored_value = (self.state.stored_value * inventory + cost) / (
             inventory + stored_kwh

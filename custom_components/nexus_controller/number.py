@@ -21,8 +21,10 @@ from .const import (
     DOMAIN,
     SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
+    SET_MANUAL_TIMEOUT,
     SET_MAX_CHARGE_PRICE,
     SET_MIN_CONTROL_POWER,
+    SET_MIN_DISCHARGE_SOC,
     SET_MIN_EARNINGS,
     SET_PID_KD,
     SET_PID_KI,
@@ -45,6 +47,22 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_MIN_DISCHARGE_SOC,
+        translation_key=SET_MIN_DISCHARGE_SOC,
+        native_min_value=7,
+        native_max_value=99,
+        native_step=1,
+        native_unit_of_measurement="%",
+    ),
+    NexusNumberDescription(
+        key=SET_MANUAL_TIMEOUT,
+        translation_key=SET_MANUAL_TIMEOUT,
+        native_min_value=1,
+        native_max_value=240,
+        native_step=1,
+        native_unit_of_measurement="min",
+    ),
     NexusNumberDescription(
         key=SET_MIN_CONTROL_POWER,
         translation_key=SET_MIN_CONTROL_POWER,

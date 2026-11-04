@@ -13,7 +13,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SET_CONTROL_ENABLED, SET_EXPORT_INCLUDES_TAX
+from .const import (
+    DOMAIN,
+    MANUAL_CHARGE,
+    MANUAL_DISCHARGE,
+    SET_CONTROL_ENABLED,
+    SET_EXPORT_INCLUDES_TAX,
+)
 from .coordinator import NexusCoordinator
 
 
@@ -24,7 +30,14 @@ async def async_setup_entry(
 ) -> None:
     """Create the control and export-tax switches."""
     coordinator: NexusCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([NexusControlSwitch(coordinator), NexusExportTaxSwitch(coordinator)])
+    async_add_entities(
+        [
+            NexusControlSwitch(coordinator),
+            NexusExportTaxSwitch(coordinator),
+            NexusManualSwitch(coordinator, MANUAL_CHARGE, "charge"),
+            NexusManualSwitch(coordinator, MANUAL_DISCHARGE, "discharge"),
+        ]
+    )
 
 
 class _NexusSwitch(CoordinatorEntity[NexusCoordinator], SwitchEntity):
@@ -46,6 +59,37 @@ class _NexusSwitch(CoordinatorEntity[NexusCoordinator], SwitchEntity):
     def is_on(self) -> bool:
         """Return the current setting."""
         return bool(self.coordinator.settings[self._key])
+
+
+class NexusManualSwitch(CoordinatorEntity[NexusCoordinator], SwitchEntity):
+    """Time-limited maximum charge or discharge; clears itself and is always off after a restart."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: NexusCoordinator, key: str, mode: str) -> None:
+        super().__init__(coordinator)
+        self._mode = mode
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.entry.entry_id)},
+            name="Nexus Controller",
+            manufacturer="Nexus Controller",
+            model="Solis Modbus entity bridge",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Whether this override is running."""
+        return self.coordinator.manual_mode == self._mode
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start the override; refused while the opposite one is running."""
+        await self.coordinator.async_set_manual(self._mode, True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop the override."""
+        await self.coordinator.async_set_manual(self._mode, False)
 
 
 class NexusControlSwitch(_NexusSwitch):
