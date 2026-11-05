@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
@@ -75,7 +76,7 @@ from .net_charge import ExportSettings, NetChargeSettings
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
 from .solar import daylight_hours, solar_surplus_kwh, update_load_average
-from .tracker import BatteryTracker
+from .tracker import WRITEDOWN_MIN_SOC_PCT, WRITEDOWN_WAIT_H, BatteryTracker
 from .utils import (
     calculate_phase_power_limits,
     parse_energy_kwh,
@@ -376,6 +377,22 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             )
         self._last_time = now
         state = self.tracker.state
+        upcoming = [forecast for start, forecast in self.price_forecast if start > now]
+        soc = data.get(CONF_BATTERY_SOC)
+        if self.tracker.write_down(
+            now=now,
+            soc_pct=soc if isinstance(soc, float) else None,
+            forecast_prices=upcoming,
+        ):
+            persistent_notification.async_create(
+                self.hass,
+                f"The battery has not discharged for over {WRITEDOWN_WAIT_H:.0f} hours while "
+                f"above {WRITEDOWN_MIN_SOC_PCT:.0f}% charge, so the value of the stored energy "
+                f"is being lowered towards the market price (now {state.stored_value:.3f} "
+                "EUR/kWh).",
+                title="Nexus Controller",
+                notification_id=f"{DOMAIN}_stored_value_writedown",
+            )
         data["cycles_today"] = state.cycles_today
         data["cycles_total"] = state.cycles_total
         data["earned_today"] = state.earned_today

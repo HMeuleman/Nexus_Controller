@@ -12,6 +12,15 @@ from .charging import inverter_efficiency
 MAX_INTEGRATION_GAP_S = 120.0
 MIN_INVENTORY_KWH = 0.5
 
+# Stored energy that sits unsold is marked down towards the market; see write_down().
+WRITEDOWN_WAIT_H = 24.0
+WRITEDOWN_MIN_SOC_PCT = 50.0
+WRITEDOWN_FRACTION_PER_DAY = 0.33
+DISCHARGING_W = 50.0
+# Time constant of the running average price (about a 24 h window).
+PRICE_AVERAGE_TAU_S = 12 * 3600
+FORECAST_TOP_SLOTS = 4
+
 
 @dataclass
 class TrackerState:
@@ -24,6 +33,9 @@ class TrackerState:
     stored_value: float = 0.10  # EUR per kWh currently in the battery
     day: str = ""
     avg_daytime_load_w: float | None = None
+    last_discharge_ts: float | None = None  # epoch seconds
+    avg_price: float | None = None  # running average import price, EUR/kWh
+    writedown_active: bool = False
 
 
 class BatteryTracker:
@@ -34,6 +46,7 @@ class BatteryTracker:
         self.state = state or TrackerState()
         self._last_time: datetime | None = None
         self._last_soc: float | None = None
+        self._last_writedown: float | None = None
 
     @staticmethod
     def state_from_dict(data: object) -> TrackerState:
@@ -72,6 +85,19 @@ class BatteryTracker:
 
         previous_time, previous_soc = self._last_time, self._last_soc
         self._last_time = now
+        timestamp = now.timestamp()
+        if state.last_discharge_ts is None:
+            state.last_discharge_ts = timestamp
+        if battery_power_w is not None and battery_power_w > DISCHARGING_W:
+            state.last_discharge_ts = timestamp
+            state.writedown_active = False
+        if import_price is not None:
+            if state.avg_price is None:
+                state.avg_price = import_price
+            elif previous_time is not None:
+                dt = min(max((now - previous_time).total_seconds(), 0.0), 3600.0)
+                weight = 1 - math.exp(-dt / PRICE_AVERAGE_TAU_S)
+                state.avg_price += weight * (import_price - state.avg_price)
         if soc_pct is not None:
             self._last_soc = soc_pct
             if previous_soc is not None and soc_pct > previous_soc:
@@ -97,6 +123,38 @@ class BatteryTracker:
             )
         else:
             self._discharge(battery_power_w, hours, grid_import_w, import_price, export_price)
+
+    def write_down(
+        self, *, now: datetime, soc_pct: float | None, forecast_prices: list[float]
+    ) -> bool:
+        """Mark the stored value down when a mostly full battery has not discharged for a day.
+
+        The value drifts towards the market (the higher of the running average price and the
+        mean of the dearest forecast slots) by a fixed fraction of the gap per day. It never
+        goes up here, and it stops as soon as the battery discharges again. Returns True on
+        the first step of an episode so the caller can notify the user.
+        """
+        timestamp = now.timestamp()
+        previous, self._last_writedown = self._last_writedown, timestamp
+        state = self.state
+        if (
+            previous is None
+            or soc_pct is None
+            or soc_pct <= WRITEDOWN_MIN_SOC_PCT
+            or state.last_discharge_ts is None
+            or timestamp - state.last_discharge_ts < WRITEDOWN_WAIT_H * 3600
+        ):
+            return False
+        top = sorted(forecast_prices, reverse=True)[:FORECAST_TOP_SLOTS]
+        reference = max(state.avg_price or 0.0, sum(top) / len(top) if top else 0.0, 0.0)
+        if state.stored_value <= reference:
+            return False
+        dt = min(max(timestamp - previous, 0.0), 600.0)
+        keep = (1 - WRITEDOWN_FRACTION_PER_DAY) ** (dt / 86400)
+        state.stored_value = reference + (state.stored_value - reference) * keep
+        started = not state.writedown_active
+        state.writedown_active = True
+        return started
 
     def _charge(
         self,
