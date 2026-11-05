@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
+    SET_DIRECTION_DELAY,
     SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
     SET_MANUAL_TIMEOUT,
@@ -47,6 +48,14 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_DIRECTION_DELAY,
+        translation_key=SET_DIRECTION_DELAY,
+        native_min_value=0,
+        native_max_value=600,
+        native_step=1,
+        native_unit_of_measurement="s",
+    ),
     NexusNumberDescription(
         key=SET_MIN_DISCHARGE_SOC,
         translation_key=SET_MIN_DISCHARGE_SOC,

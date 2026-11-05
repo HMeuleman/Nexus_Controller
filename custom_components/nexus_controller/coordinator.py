@@ -50,6 +50,7 @@ from .const import (
     PV_POWER_ENTITIES,
     ROUND_TRIP_EFFICIENCY,
     SET_CONTROL_ENABLED,
+    SET_DIRECTION_DELAY,
     SET_DISCHARGE_OFFSET,
     SET_DISCHARGE_PRICE_ABOVE,
     SET_EXPORT_INCLUDES_TAX,
@@ -522,7 +523,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         elif plan.reason in PID_REASONS:
             # Load without the battery: below the minimum there is nothing worth regulating.
             base_net = sum(phases) + battery_power
-            minimum = float(self.settings[SET_MIN_CONTROL_POWER])
+            offset = float(self.settings[SET_DISCHARGE_OFFSET])
+            # The setpoint shift below would otherwise exceed the load that is being regulated.
+            minimum = max(float(self.settings[SET_MIN_CONTROL_POWER]), offset)
             if (plan.mode == "discharge" and base_net < minimum) or (
                 plan.mode == "charge" and base_net > -minimum
             ):
@@ -531,11 +534,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 status = command.reason
             else:
                 # A closed loop cancels any added output, so the offset shifts the setpoint:
-                # discharge settles at this much export instead of zero.
-                offset = (
-                    float(self.settings[SET_DISCHARGE_OFFSET]) if plan.mode == "discharge" else 0.0
-                )
-                command = self._pid_command(plan, sum(phases) + offset, battery_power, limits)
+                # discharge settles at this much export, charge at this much import.
+                shift = offset if plan.mode == "discharge" else -offset
+                command = self._pid_command(plan, sum(phases) + shift, battery_power, limits)
                 status = command.reason
         else:
             self._pid_memory = PIDMemory()
@@ -548,6 +549,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 command.mode,
                 command.power_w,
                 min_interval_s=self.sample_estimator.interval_s,
+                direction_delay_s=float(self.settings[SET_DIRECTION_DELAY]),
             )
         except ActuatorError as err:
             _LOGGER.error("Battery control stopped: %s", err)

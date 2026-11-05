@@ -48,9 +48,16 @@ class BatteryActuator:
         self._power_w = 0.0
         self._last_write = 0.0
         self._last_enable = 0.0
+        self._last_active: str | None = None  # direction that ran most recently
+        self._last_stop = 0.0
 
     async def async_apply(
-        self, mode: DispatchMode, power_w: float, *, min_interval_s: float
+        self,
+        mode: DispatchMode,
+        power_w: float,
+        *,
+        min_interval_s: float,
+        direction_delay_s: float = 0.0,
     ) -> str:
         """Apply the request and return a short status string."""
         if mode == "idle" or not math.isfinite(power_w) or power_w <= 0:
@@ -75,6 +82,18 @@ class BatteryActuator:
             self._last_write = now
             return "power_updated"
 
+        if self._mode in ("charge", "discharge") and direction_delay_s > 0:
+            # Never reverse directly: stop first, the delay then runs from this moment.
+            await self._async_idle()
+            return "idle_before_reverse"
+        if (
+            direction_delay_s > 0
+            and self._last_active not in (None, mode)
+            and now - self._last_stop < direction_delay_s
+        ):
+            await self._async_idle()
+            return "waiting_direction_delay"
+
         await self._async_start(mode, power_w, other_off=True)
         return "mode_started"
 
@@ -90,12 +109,20 @@ class BatteryActuator:
 
     async def async_release(self) -> str:
         """Stop forced charging/discharging; safe to call repeatedly."""
+        self._note_stop()
         self._mode = None
         return await self._async_idle(force=True)
+
+    def _note_stop(self) -> None:
+        """Remember which direction just ended and when."""
+        if self._mode in ("charge", "discharge"):
+            self._last_active = self._mode
+            self._last_stop = time.monotonic()
 
     async def _async_idle(self, *, force: bool = False) -> str:
         if self._mode == "idle" and not force:
             return "idle"
+        self._note_stop()
         for mode in ("charge", "discharge"):
             await self._async_switch(mode, False)
         self._mode = "idle"
