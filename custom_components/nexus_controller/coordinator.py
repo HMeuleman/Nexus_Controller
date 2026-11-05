@@ -67,6 +67,9 @@ from .const import (
     SET_PID_STOP_ERROR,
     SET_RESERVED_ROOM,
     SET_TAX,
+    SET_WRITEDOWN_RATE,
+    SET_WRITEDOWN_SOC,
+    SET_WRITEDOWN_WAIT,
     SETTING_DEFAULTS,
     STORAGE_VERSION,
 )
@@ -76,7 +79,7 @@ from .net_charge import ExportSettings, NetChargeSettings
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
 from .solar import daylight_hours, solar_surplus_kwh, update_load_average
-from .tracker import WRITEDOWN_MIN_SOC_PCT, WRITEDOWN_WAIT_H, BatteryTracker
+from .tracker import BatteryTracker
 from .utils import (
     calculate_phase_power_limits,
     parse_energy_kwh,
@@ -379,15 +382,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         state = self.tracker.state
         upcoming = [forecast for start, forecast in self.price_forecast if start > now]
         soc = data.get(CONF_BATTERY_SOC)
+        wait_h = float(self.settings[SET_WRITEDOWN_WAIT])
+        min_soc = float(self.settings[SET_WRITEDOWN_SOC])
         if self.tracker.write_down(
             now=now,
             soc_pct=soc if isinstance(soc, float) else None,
             forecast_prices=upcoming,
+            wait_h=wait_h,
+            min_soc_pct=min_soc,
+            fraction_per_day=float(self.settings[SET_WRITEDOWN_RATE]) / 100,
         ):
             persistent_notification.async_create(
                 self.hass,
-                f"The battery has not discharged for over {WRITEDOWN_WAIT_H:.0f} hours while "
-                f"above {WRITEDOWN_MIN_SOC_PCT:.0f}% charge, so the value of the stored energy "
+                f"The battery has not discharged for over {wait_h:.0f} hours while "
+                f"above {min_soc:.0f}% charge, so the value of the stored energy "
                 f"is being lowered towards the market price (now {state.stored_value:.3f} "
                 "EUR/kWh).",
                 title="Nexus Controller",

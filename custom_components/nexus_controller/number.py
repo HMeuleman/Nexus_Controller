@@ -34,6 +34,9 @@ from .const import (
     SET_PID_STOP_ERROR,
     SET_RESERVED_ROOM,
     SET_TAX,
+    SET_WRITEDOWN_RATE,
+    SET_WRITEDOWN_SOC,
+    SET_WRITEDOWN_WAIT,
     TRACK_EARNED_TOTAL,
     TRACK_STORED_VALUE,
 )
@@ -48,6 +51,30 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_WRITEDOWN_WAIT,
+        translation_key=SET_WRITEDOWN_WAIT,
+        native_min_value=0,
+        native_max_value=720,
+        native_step=1,
+        native_unit_of_measurement="h",
+    ),
+    NexusNumberDescription(
+        key=SET_WRITEDOWN_SOC,
+        translation_key=SET_WRITEDOWN_SOC,
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="%",
+    ),
+    NexusNumberDescription(
+        key=SET_WRITEDOWN_RATE,
+        translation_key=SET_WRITEDOWN_RATE,
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="%",
+    ),
     NexusNumberDescription(
         key=SET_DIRECTION_DELAY,
         translation_key=SET_DIRECTION_DELAY,

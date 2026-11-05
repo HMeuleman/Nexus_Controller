@@ -125,7 +125,14 @@ class BatteryTracker:
             self._discharge(battery_power_w, hours, grid_import_w, import_price, export_price)
 
     def write_down(
-        self, *, now: datetime, soc_pct: float | None, forecast_prices: list[float]
+        self,
+        *,
+        now: datetime,
+        soc_pct: float | None,
+        forecast_prices: list[float],
+        wait_h: float = WRITEDOWN_WAIT_H,
+        min_soc_pct: float = WRITEDOWN_MIN_SOC_PCT,
+        fraction_per_day: float = WRITEDOWN_FRACTION_PER_DAY,
     ) -> bool:
         """Mark the stored value down when a mostly full battery has not discharged for a day.
 
@@ -139,10 +146,11 @@ class BatteryTracker:
         state = self.state
         if (
             previous is None
+            or fraction_per_day <= 0
             or soc_pct is None
-            or soc_pct <= WRITEDOWN_MIN_SOC_PCT
+            or soc_pct <= min_soc_pct
             or state.last_discharge_ts is None
-            or timestamp - state.last_discharge_ts < WRITEDOWN_WAIT_H * 3600
+            or timestamp - state.last_discharge_ts < wait_h * 3600
         ):
             return False
         top = sorted(forecast_prices, reverse=True)[:FORECAST_TOP_SLOTS]
@@ -150,7 +158,7 @@ class BatteryTracker:
         if state.stored_value <= reference:
             return False
         dt = min(max(timestamp - previous, 0.0), 600.0)
-        keep = (1 - WRITEDOWN_FRACTION_PER_DAY) ** (dt / 86400)
+        keep = (1 - min(fraction_per_day, 1.0)) ** (dt / 86400)
         state.stored_value = reference + (state.stored_value - reference) * keep
         started = not state.writedown_active
         state.writedown_active = True
