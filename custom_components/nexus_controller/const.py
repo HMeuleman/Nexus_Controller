@@ -43,6 +43,7 @@ SET_PID_STOP_ERROR: Final = "pid_stop_error_w"
 SET_MIN_CONTROL_POWER: Final = "min_control_power_w"
 SET_MIN_DISCHARGE_SOC: Final = "min_discharge_soc"
 SET_DIRECTION_DELAY: Final = "direction_delay_s"
+SET_SOLAR_BLOCK: Final = "solar_block_discharge_w"
 SET_WRITEDOWN_WAIT: Final = "writedown_wait_h"
 SET_WRITEDOWN_SOC: Final = "writedown_min_soc"
 SET_WRITEDOWN_RATE: Final = "writedown_percent_per_day"
@@ -85,6 +86,7 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_DISCHARGE_OFFSET: 50.0,
     SET_MIN_DISCHARGE_SOC: 10.0,
     SET_DIRECTION_DELAY: 60.0,
+    SET_SOLAR_BLOCK: 10_000.0,
     SET_WRITEDOWN_WAIT: 24.0,
     SET_WRITEDOWN_SOC: 50.0,
     SET_WRITEDOWN_RATE: 33.0,

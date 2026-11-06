@@ -33,6 +33,7 @@ from .const import (
     SET_PID_START_ERROR,
     SET_PID_STOP_ERROR,
     SET_RESERVED_ROOM,
+    SET_SOLAR_BLOCK,
     SET_TAX,
     SET_WRITEDOWN_RATE,
     SET_WRITEDOWN_SOC,
@@ -51,6 +52,14 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_SOLAR_BLOCK,
+        translation_key=SET_SOLAR_BLOCK,
+        native_min_value=0,
+        native_max_value=20000,
+        native_step=50,
+        native_unit_of_measurement="W",
+    ),
     NexusNumberDescription(
         key=SET_WRITEDOWN_WAIT,
         translation_key=SET_WRITEDOWN_WAIT,

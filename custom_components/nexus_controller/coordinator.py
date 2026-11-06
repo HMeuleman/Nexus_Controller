@@ -66,6 +66,7 @@ from .const import (
     SET_PID_START_ERROR,
     SET_PID_STOP_ERROR,
     SET_RESERVED_ROOM,
+    SET_SOLAR_BLOCK,
     SET_TAX,
     SET_WRITEDOWN_RATE,
     SET_WRITEDOWN_SOC,
@@ -485,6 +486,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 discharge_price_above=self._discharge_threshold(),
                 min_soc_pct=float(self.settings[SET_MIN_DISCHARGE_SOC]),
                 max_soc_pct=100.0,
+                solar_inhibit_discharge_above_w=float(self.settings[SET_SOLAR_BLOCK]),
             ),
             net_charge=NetChargeSettings(earnings, ROUND_TRIP_EFFICIENCY, MAX_BATTERY_POWER_W),
             export=ExportSettings(
