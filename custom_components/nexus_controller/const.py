@@ -56,6 +56,7 @@ SET_CONTROL_ENABLED: Final = "control_enabled"
 
 # The two writable tracker values, also exposed as numbers.
 TRACK_EARNED_TOTAL: Final = "earned_total"
+TRACK_CYCLES_TOTAL: Final = "cycles_total"
 TRACK_STORED_VALUE: Final = "stored_energy_value"
 
 PV_POWER_ENTITIES: Final = (CONF_PV_POWER, CONF_PV_POWER_2, CONF_PV_POWER_3)
@@ -124,7 +125,6 @@ SENSOR_ENTITIES: Final = (
     "price_tax_free",
     "tax_used",
     "cycles_today",
-    "cycles_total",
     "earned_today",
     "sample_interval",
     "discharge_threshold",
@@ -152,8 +152,7 @@ ENTITY_LABELS: Final = {
     "shadow_reason": ("shadow_reason", None),
     "price_tax_free": ("price_tax_free", "€/kWh"),
     "tax_used": ("tax_used", "€/kWh"),
-    "cycles_today": ("cycles_today", None),
-    "cycles_total": ("cycles_total", None),
+    "cycles_today": ("cycles_today", "cycles"),
     "earned_today": ("earned_today", "EUR"),
     "sample_interval": ("sample_interval", "s"),
     "discharge_threshold": ("discharge_threshold", "€/kWh"),
@@ -168,7 +167,6 @@ ENTITY_PRECISION: Final = {
     "price_tax_free": 4,
     "tax_used": 4,
     "cycles_today": 2,
-    "cycles_total": 2,
     "earned_today": 2,
     "sample_interval": 1,
     "discharge_threshold": 3,

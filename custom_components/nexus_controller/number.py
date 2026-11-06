@@ -38,6 +38,7 @@ from .const import (
     SET_WRITEDOWN_RATE,
     SET_WRITEDOWN_SOC,
     SET_WRITEDOWN_WAIT,
+    TRACK_CYCLES_TOTAL,
     TRACK_EARNED_TOTAL,
     TRACK_STORED_VALUE,
 )
@@ -205,6 +206,15 @@ SETTINGS = (
 
 TRACKED = (
     NexusNumberDescription(
+        key=TRACK_CYCLES_TOTAL,
+        translation_key=TRACK_CYCLES_TOTAL,
+        native_min_value=0,
+        native_max_value=100_000,
+        native_step=0.01,
+        native_unit_of_measurement="cycles",
+        mode=NumberMode.BOX,
+    ),
+    NexusNumberDescription(
         key=TRACK_EARNED_TOTAL,
         translation_key=TRACK_EARNED_TOTAL,
         native_min_value=-1_000_000,
@@ -299,14 +309,18 @@ class NexusTrackerNumber(CoordinatorEntity[NexusCoordinator], NumberEntity):
         """Return the tracker value."""
         state = self.coordinator.tracker.state
         if self.entity_description.key == TRACK_EARNED_TOTAL:
-            return state.earned_total
-        return state.stored_value
+            return round(state.earned_total, 2)
+        if self.entity_description.key == TRACK_CYCLES_TOTAL:
+            return round(state.cycles_total, 2)
+        return round(state.stored_value, 4)
 
     async def async_set_native_value(self, value: float) -> None:
         """Overwrite the tracker value."""
         state = self.coordinator.tracker.state
         if self.entity_description.key == TRACK_EARNED_TOTAL:
             state.earned_total = value
+        elif self.entity_description.key == TRACK_CYCLES_TOTAL:
+            state.cycles_total = value
         else:
             state.stored_value = value
         self.async_write_ha_state()

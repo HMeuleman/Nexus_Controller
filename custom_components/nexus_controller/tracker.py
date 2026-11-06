@@ -102,8 +102,8 @@ class BatteryTracker:
             self._last_soc = soc_pct
             if previous_soc is not None and soc_pct > previous_soc:
                 gained = (soc_pct - previous_soc) / 100
-                state.cycles_today += gained
-                state.cycles_total += gained
+                state.cycles_today = round(state.cycles_today + gained, 4)
+                state.cycles_total = round(state.cycles_total + gained, 4)
 
         if (
             previous_time is None

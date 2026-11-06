@@ -109,6 +109,7 @@
       "min_discharge_soc": {"name": "Minimum SOC to allow discharge"},
       "manual_timeout_min": {"name": "Manual override timeout"},
       "earned_total": {"name": "Battery earned total"},
+      "cycles_total": {"name": "Battery cycles total"},
       "stored_energy_value": {"name": "Value of stored energy"}
     },
     "switch": {

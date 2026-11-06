@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -29,6 +33,7 @@ SENSORS = tuple(
         translation_key=translation_key,
         native_unit_of_measurement=unit,
         suggested_display_precision=ENTITY_PRECISION.get(key),
+        state_class=SensorStateClass.MEASUREMENT if key == "cycles_today" else None,
         config_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
         has_entity_name=True,

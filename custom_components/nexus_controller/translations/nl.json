@@ -109,6 +109,7 @@
       "min_discharge_soc": {"name": "Minimale SOC om te ontladen"},
       "manual_timeout_min": {"name": "Time-out handmatige bediening"},
       "earned_total": {"name": "Batterij verdiend totaal"},
+      "cycles_total": {"name": "Batterijcycli totaal"},
       "stored_energy_value": {"name": "Waarde opgeslagen energie"}
     },
     "switch": {

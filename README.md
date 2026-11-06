@@ -2,66 +2,133 @@
 
 ![Nexus Controller](custom_components/nexus_controller/brand/icon.png)
 
-An experimental Home Assistant integration for a Zonneplan Nexus battery using the modified Solis S6-EH3P10K-H-ZP inverter.
+A Home Assistant integration that runs a Zonneplan Nexus home battery (modified Solis S6-EH3P10K-H-ZP inverter) with its own energy management strategy: self-consumption (NOM, "nul op de meter") with a PID loop, plus price-based grid charging and selling on dynamic tariffs.
 
-## Current status
+> **Experimental software that writes to a battery inverter.** Control is **off by default** and always off after a restart. Read the [safety section](#safety-mechanisms) first, start in shadow mode, and keep the Zonneplan dongles connected until you trust it.
 
-**Settings as entities (0.5):** strategy settings are number/switch entities (config category), not setup options: reserved room per phase, max charge price, discharge price, minimum desired earnings per kWh (default €0.20, wear included), fallback tax (default €0.11/kWh; the forecast's own tax is used when it provides one), PID gains and deadbands, and a switch for paying exported energy including tax (2026) or without (2027+). Diagnostics add the tax-free price, battery cycles (daily and total), battery earnings (daily; total and stored-energy value are editable and persisted), the detected grid sample interval, and the control status.
+## What it does
 
-**Control is off by default.** The diagnostic switch `Battery control enabled` makes the integration write to the four Solis entities (always off again after a restart; turning it off releases the battery). It needs the net battery power sensor. Test in shadow mode first and verify the units of the Solis power numbers.
+- Keeps the grid meter near zero when it pays off (NOM), discharging against house load and charging from PV surplus.
+- Charges from the grid in cheap slots and sells to the grid in the dearest slots when the price spread covers conversion losses and your desired earnings.
+- Tracks what the battery has earned, the value of the energy stored in it, and the number of cycles.
+- Works with the Solis Modbus force charge/discharge switches and power numbers (`rc_force_battery_charge`, `rc_force_battery_discharge` and their power entities).
 
-Charging from the grid is spread over the cheap slots at the lowest power that still fills the battery, because the inverter is assumed to be more efficient at low power (95 % at 500 W, 85 % at 10 kW). An optional solar forecast sensor (expected remaining kWh) reduces how much is bought.
+## Installation
 
-The text below describes the original read-only scaffold.
+In recent Home Assistant versions HACS appears as the **Marketplace**; the steps are the same. The repository is not in the default catalog, so add it as a custom repository:
 
-This is an early development preview. Setup lets you select net grid power for each phase, up to three optional PV production sensors, battery state of charge, electricity price, and the four Solis charge/discharge switch and power entities. It also configures a fuse limit per phase (default 25 A) and headroom (default 1,000 W per phase). Phase sensors should use positive values for import and negative values for export. The PV diagnostic sensor sums configured sources and normalizes `kW` readings to `W`. With no PV sensors configured it reports `0 W`; a configured PV sensor reporting `unknown` is treated as zero production, even if Home Assistant omits its unit while there is no sun. An `unavailable` sensor, missing entity, malformed reading, or unsupported explicit unit still makes the combined value unknown. Select each sensor only once, and do not combine an aggregate PV sensor with its component sensors.
+1. Open HACS (Marketplace), menu, **Custom repositories**.
+2. Add `https://github.com/HMeuleman/Nexus_Controller`, type **Integration**.
+3. Install **Nexus Controller** and restart Home Assistant.
+4. Add it under **Settings > Devices & services > Add integration**.
 
-The diagnostic safe charge/discharge power limits assume the inverter changes all three phases evenly. Each phase limit is based on the least available headroom across the three phase measurements, with an additional total Nexus cap of 10 kW. If any phase measurement is unavailable, both limits are unknown. **This preview does not write to the inverter or schedule battery operation.** Keep the Zonneplan dongles connected and do not rely on these diagnostic limits as a live protection system.
+## Setup
 
-After updating from an earlier version, open the integration's **Configure** dialog and select the three phase sensors and four Solis control entities. The former single grid-power entity cannot safely be migrated into three phase measurements.
+The setup dialog maps existing entities (each only once):
 
-The four selected Solis controls are currently only mapped, not operated. Before live control is enabled, a charge/discharge mode change will need to disable both modes, zero both power settings, enable only the selected mode, and then apply its requested power. Repeated setpoint writes should be rate-limited; this sequence still needs offline dispatch tests and validation against the inverter before it can control a live battery.
+| Input | Notes |
+| --- | --- |
+| Grid power L1, L2, L3 | W, positive is import, negative is export |
+| Solar power (up to three) | W or kW; `unknown` counts as 0 |
+| Battery state of charge | % |
+| Electricity price | EUR/kWh including tax |
+| Price forecast (optional) | Defaults to the `forecast` attribute of the price sensor. The Zonneplan quarter-hour tariff sensor is recommended: it also carries `price_tax_excluded`, so the exact tax per slot is known |
+| Net battery power | W, positive is discharging, negative is charging. Required for control, shadow proposals and the earnings tracker |
+| Solar forecast (optional) | Expected remaining solar energy in kWh until sunset (the coming day at night) |
+| Solis charge/discharge switches and power numbers | The four control entities |
+| Fuse limit per phase | Default 25 A |
 
-An offline-only layered simulator is covered by unit tests. The decision layer uses the agreed 7% minimum SOC, 100% maximum SOC, charging at or below `€0.15/kWh`, and discharging at or above `€0.35/kWh` when PV is absent and the house imports power. It also rejects export as a PV-surplus signal when measured export exceeds PV production plus the configured margin. The interval between price thresholds is neutral; plausible PV export can still request charging there.
+Everything else is a Home Assistant entity (see below), so you can change it without reloading.
 
-For permitted self-consumption actions, a separate closed-loop step uses measured net power and actual battery charge/discharge power, independent charge/discharge PID gains, integrator anti-windup, output filtering, and start/stop hysteresis. Cheap grid charging remains a separate proposal and does not run the fast PID loop. PID tunings are explicit simulation inputs; no live gains or hardware actions are configured. The simulator is not connected to Home Assistant entities or Solis services. The expected `€0.09/kWh` export tax from 2027 is intentionally excluded until an export-value price model is designed.
+## Entities
 
-### Replay real Home Assistant history
+Settings (configuration entities, values survive restarts):
 
-`sim/replay.py` runs a shadow replay over one timestamp-aligned CSV. All power columns must be normalized to watts; grid phase values are positive for import and negative for export. Required columns:
+| Entity | Default | Meaning |
+| --- | --- | --- |
+| Reserved room per phase | 1000 W | Headroom kept free on each phase |
+| Max price for charging from grid | 0.15 | Always charge at or below this price (set to -1 to disable) |
+| Minimum price for covering house load (floor) | 0.00 | Lower bound for the NOM discharge threshold |
+| Minimum desired earnings per kWh | 0.20 | Wear included |
+| Tax per kWh (fallback) | 0.11 | Used when the forecast does not provide the tax |
+| Minimum SOC to allow discharge | 10 % | 7 to 99 |
+| Control offset | 50 W | Shifts the PID setpoint: slight export when discharging, slight import when charging |
+| Minimum power to control | 100 W | Below this (never lower than the offset) the PID does nothing |
+| Idle time before reversing direction | 60 s | 0 allowed |
+| Solar production above which discharge is blocked | 10000 W | 0 blocks discharge as soon as there is any PV output |
+| PID gains and deadbands | kp 0.5, ki 0, kd 0, 15/8 W | kp is defined at 10 s samples |
+| Write-down: hours / minimum SOC / percent per day | 24 h, 50 %, 33 % | 0 percent turns it off |
+| Manual override timeout | 30 min | See manual override |
+| Exported energy paid including tax | off | On for 2026 rules, off from 2027 |
 
-```text
-timestamp,grid_power_l1_w,grid_power_l2_w,grid_power_l3_w,pv_power_w,battery_soc_pct,electricity_price_eur_kwh,battery_power_w
-```
+Controls: **Battery control enabled** (off by default), **Manual maximum charge** and **Manual maximum discharge**.
 
-Timestamps must be ISO-8601 with a timezone. `battery_power_w` is the measured net battery power (for example `sensor.solis_battery_power_net`), positive when the battery discharges and negative when it charges. It is not one of the writable `number.*` setpoints. Leave unknown readings blank; the planner will fail idle for that sample. Keep samples chronological and aligned. Gaps over 15 minutes reset controller memory and produce an idle row.
+Tracked values you can overwrite: **Battery earned total**, **Battery cycles total**, **Value of stored energy**.
 
-Run from the repository root, supplying measured/tuned PID gains rather than guessed values:
+Diagnostics: tax-free price, tax used, price from which the battery covers house load, battery cycles today, earned today, detected grid sample interval, average daytime house load, expected solar surplus, safe charge/discharge power limits, price forecast statistics, the shadow proposal (mode, power, reason) and the control mode, power and status.
 
-```powershell
-python -m sim.replay .\trace.csv .\replay.csv `
-	--kp-charge <value> --ki-charge <value> --kd-charge <value> `
-	--kp-discharge <value> --ki-discharge <value> --kd-discharge <value> `
-	--integral-limit-ws <value> --filter-alpha <value>
-```
+## How the algorithm works
 
-The output CSV preserves each input sample and adds the phase caps, proposed mode, proposed watts, and reason. This is a shadow analysis, not a counterfactual plant simulation: it does not predict how the inverter would have responded to a different command, and it never sends commands. A CSV export is not present in this repository yet, so no conclusion about your actual history has been drawn.
+### Prices and tax
 
-The control implementation is deliberately deferred until the selected Solis Modbus entity IDs, units, valid ranges, update semantics, and behavior without the Zonneplan dongles have been confirmed. The Tweakers thread provides strategy discussion and partial YAML, not a complete verified control specification.
+Every price slot has a tax: the difference between `price_tax_included` and `price_tax_excluded` when the forecast offers it, otherwise the configured fallback. The price excluding tax is shown as a sensor. Selling to the grid is valued at the price minus tax (from 2027), or at the full price when "exported energy paid including tax" is on (2026).
 
-## Install with HACS
+### The value of stored energy
 
-This repository is public but is not currently included in the HACS default catalog. In HACS, open the menu, select **Custom repositories**, add `HMeuleman/Nexus_Controller`, choose **Integration**, and install **Nexus Controller**. Restart Home Assistant and add it under **Settings > Devices & services > Add integration**.
+The integration keeps a running cost basis for the energy in the battery. Charging from the grid adds energy at the import price, charging from PV adds it at the price it could have been exported for, and conversion losses are included. Discharging books the energy at what it saved or sold for, minus its cost basis; that is the "earned" figure. Charge cycles count every percent of SOC gained as 0.01 cycle.
 
-This preview is read-only and is provided for setup and sensor-mapping tests. Installing it does not take over battery operation.
+### Decisions
 
-## Issues
+Each time the grid meter reports, the strategy decides, in this order:
 
-Report setup problems or suggestions in the [GitHub issue tracker](https://github.com/HMeuleman/Nexus_Controller/issues).
+1. **Sell to the grid.** If the price after export tax beats the stored value plus the desired earnings, and the battery is above its reserve (at least 30 % and the minimum discharge SOC), it discharges at maximum power, but only in the dearest slots that the available energy can cover. If a dearer slot is coming that the energy can still cover, it waits for it.
+2. **Cover house load (NOM).** If the price reaches the discharge threshold, `stored value + desired earnings` (never below the floor setting), the house imports power and SOC is above the minimum, the PID discharges to bring the meter to zero. The threshold follows what the energy actually cost, so cheap stored energy is spent earlier and expensive stored energy is not sold at a loss.
+3. **Charge from PV surplus.** When the house exports and the battery is not full, the PID charges to absorb the surplus.
+4. **Charge at a low price.** At or below the maximum charging price it charges at the permitted maximum.
+5. **Charge from the grid for later.** The cheapest slots in the known forecast are paired with the dearest later slots. A pair is used when the dear price times the round-trip efficiency, minus the cheap price, still earns the desired amount. The planner chooses how many slots and at what power the total profit is highest. Expected solar surplus (from the solar forecast, the average daytime house load and the daylight left) is subtracted from what is bought, and the dear side is valued as the better of use in the house or export.
 
-## Development setup
+Charging and discharging efficiency follows a measured curve (grid charging 85 % at 250 W, 87.5 % at 500 W, 90 % at 1 kW, 93.5 % at 2 kW, 97.5 % at 5 to 7.5 kW, 95.75 % at 10 kW; slightly higher for PV charging), so the sweet spot is a mid power, not the lowest.
 
-Use Python 3.12 or newer. From this project directory:
+### The PID loop
+
+NOM and PV surplus use an incremental PID on the measured net power: the new power is the measured battery power plus `kp x error` (plus integral and derivative terms if configured). The integration measures how often the meter reports and scales the proportional step for faster meters, so a 1 s meter and a 30 s meter both settle. Extra rules keep it calm:
+
+- Start and stop deadbands prevent hunting around zero; inside the deadband it holds the current power.
+- If it overshoots it eases off instead of dropping to zero.
+- Below the minimum control power (measured on the house load without the battery) it does not regulate at all.
+- The control offset shifts the setpoint, which compensates for a constant measurement bias.
+- The proposed power is clamped by the per-phase limits: for each phase the fuse capacity minus the reserved room, using the load without the battery, over three phases and a 10 kW cap.
+
+### Stored value write-down
+
+If the battery stays above the configured SOC and does not discharge for the configured hours (for example after a crash during a planned cycle), the stored value is marked down towards the market: the higher of the running average price and the mean of the dearest forecast slots, by a percentage of the gap per day. It never goes up this way, stops when the battery discharges again, and creates a notification when it starts.
+
+## Safety mechanisms
+
+- **Control is off by default** and after every restart. Turning it off, an error, or unloading the integration releases the battery (both force modes off).
+- **Write sequence:** both modes off, power set, then the mode on, rate limited.
+- **Keepalive:** the Solis falls back to zero when it is not refreshed, so every 60 s the enable switch is cycled off and on together with the power write. If the inverter drops the mode on its own, it is started again.
+- **Idle time between directions:** the battery goes idle for the configured time before it may reverse.
+- **Limits:** minimum SOC, 100 % maximum, per-phase headroom and the 10 kW cap also apply to the manual override.
+- **Unit check:** the power numbers are read for their unit (W or kW) and limits before writing; other units stop the control.
+
+## Manual override
+
+Set the timeout, then turn on **Manual maximum charge** or **Manual maximum discharge** (they exclude each other). The battery runs at the maximum safe power until the timeout, the SOC limit, or you turn it off. It works with automatic control off, and is always off after a restart.
+
+## Tuning tips
+
+- Start with control off and watch the shadow proposal sensors for a few days.
+- If the grid import settles at a constant value while discharging, raise the control offset; check the step attribute of the Solis power number (a step of 100 W hides small corrections).
+- For faster settling raise `kp` (try 0.7) and use a small `ki` (0.005).
+
+## Simulation tools
+
+The `sim/` directory has offline tools used to choose the defaults from real Home Assistant history: `build_trace.py` turns a history export into a trace, `closed_loop.py` simulates the strategy against the reconstructed load without the battery, and `replay.py` replays decisions without a plant model. They never talk to Home Assistant.
+
+## Development
+
+Python 3.12 or newer:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -71,11 +138,8 @@ pytest
 ruff check .
 ```
 
-For local Home Assistant testing, copy `custom_components/nexus_controller` into the Home Assistant configuration's `custom_components` directory, restart Home Assistant, and add **Nexus Controller** from Devices & Services. This scaffold is not yet suitable for controlling a live battery.
+To try it locally, copy `custom_components/nexus_controller` into your Home Assistant `custom_components` directory and restart.
 
-## Planned control work
+## Issues
 
-- Verify input sensor sign conventions, units, freshness, and electricity price attributes.
-- Confirm the Solis Modbus writable entities and safe bounds for this inverter/battery combination.
-- Define explicit operating modes, minimum reserve, power caps, and a reliable stop/disable behavior.
-- Implement and test charge/discharge strategy in simulation before enabling live writes.
+Report problems or suggestions in the [GitHub issue tracker](https://github.com/HMeuleman/Nexus_Controller/issues).
