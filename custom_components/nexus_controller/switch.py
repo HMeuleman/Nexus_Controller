@@ -19,6 +19,7 @@ from .const import (
     MANUAL_DISCHARGE,
     SET_CONTROL_ENABLED,
     SET_EXPORT_INCLUDES_TAX,
+    SET_PLANNER_OVERRIDE,
 )
 from .coordinator import NexusCoordinator
 
@@ -34,6 +35,7 @@ async def async_setup_entry(
         [
             NexusControlSwitch(coordinator),
             NexusExportTaxSwitch(coordinator),
+            NexusPlannerSwitch(coordinator),
             NexusManualSwitch(coordinator, MANUAL_CHARGE, "charge"),
             NexusManualSwitch(coordinator, MANUAL_DISCHARGE, "discharge"),
         ]
@@ -105,6 +107,21 @@ class NexusControlSwitch(_NexusSwitch):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Release the battery back to the inverter."""
         await self.coordinator.async_set_control(False)
+
+
+class NexusPlannerSwitch(_NexusSwitch):
+    """Select the experimental planner; always off after startup."""
+
+    _key = SET_PLANNER_OVERRIDE
+    _attr_entity_category = EntityCategory.CONFIG
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Select planner decisions without enabling battery control."""
+        await self.coordinator.async_set_planner_override(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Return to the existing strategy."""
+        await self.coordinator.async_set_planner_override(False)
 
 
 class NexusExportTaxSwitch(_NexusSwitch, RestoreEntity):

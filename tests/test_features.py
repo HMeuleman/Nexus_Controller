@@ -1,6 +1,7 @@
 """Tests for efficiency-aware charge planning, tracking, solar and sample interval helpers."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -8,6 +9,7 @@ from custom_components.nexus_controller.charging import inverter_efficiency, pla
 from custom_components.nexus_controller.sample_rate import SampleIntervalEstimator
 from custom_components.nexus_controller.solar import (
     daylight_hours,
+    hourly_forecast_quarters,
     solar_surplus_kwh,
     update_load_average,
 )
@@ -181,6 +183,30 @@ def test_load_average_only_learns_in_daylight():
     assert update_load_average(None, load_w=400, pv_power_w=0, dt_s=10) is None
     assert update_load_average(None, load_w=400, pv_power_w=1000, dt_s=10) == 400
     assert update_load_average(400, load_w=1400, pv_power_w=1000, dt_s=10) > 400
+
+
+def test_solar_ml_hourly_energy_is_split_into_utc_quarters():
+    quarters = hourly_forecast_quarters(
+        {"08:00": 0.282, "09:00": 0.678},
+        day=date(2026, 11, 10),
+        timezone=ZoneInfo("Europe/Amsterdam"),
+    )
+
+    assert len(quarters) == 8
+    assert quarters[datetime(2026, 11, 10, 7, tzinfo=UTC)] == pytest.approx(0.282 / 4)
+    assert sum(quarters.values()) == pytest.approx(0.282 + 0.678)
+
+
+def test_solar_forecast_skips_invalid_missing_and_dst_ambiguous_hours():
+    quarters = hourly_forecast_quarters(
+        {"01:00": 1.0, "02:00": 2.0, "03:00": -1, "04:00": "unavailable"},
+        day=date(2026, 10, 25),
+        timezone=ZoneInfo("Europe/Amsterdam"),
+    )
+
+    assert len(quarters) == 4
+    assert sum(quarters.values()) == pytest.approx(1.0)
+    assert hourly_forecast_quarters(None, day=date(2026, 11, 10), timezone=UTC) == {}
 
 
 def test_solar_surplus_subtracts_expected_house_use():

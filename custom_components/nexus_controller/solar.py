@@ -3,12 +3,43 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 # Time constant of the daytime load average, in seconds of daylight (about three days).
 LOAD_AVERAGE_TAU_S = 3 * 10 * 3600
 # PV output above which a sample counts as daytime.
 DAYTIME_PV_W = 50.0
+
+
+def hourly_forecast_quarters(
+    hours: object, *, day: date, timezone: tzinfo
+) -> dict[datetime, float]:
+    """Convert local hourly kWh forecasts into UTC quarter-hour kWh estimates."""
+    if not isinstance(hours, Mapping):
+        return {}
+    quarters: dict[datetime, float] = {}
+    for label, raw_energy in hours.items():
+        if not isinstance(label, str) or len(label) != 5 or label[2:] != ":00":
+            continue
+        try:
+            hour = int(label[:2])
+            if not 0 <= hour <= 23 or label[:2] != f"{hour:02d}":
+                continue
+            energy = float(raw_energy)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(energy) or energy < 0 or isinstance(raw_energy, bool):
+            continue
+        start = datetime.combine(day, time(hour), tzinfo=timezone)
+        if start.utcoffset() != start.replace(fold=1).utcoffset():
+            continue
+        start_utc = start.astimezone(UTC)
+        if start_utc.astimezone(timezone).replace(tzinfo=None) != start.replace(tzinfo=None):
+            continue
+        for quarter in range(4):
+            quarters[start_utc + timedelta(minutes=15 * quarter)] = energy / 4
+    return quarters
 
 
 def update_load_average(

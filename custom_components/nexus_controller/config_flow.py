@@ -22,6 +22,8 @@ from .const import (
     CONF_GRID_POWER_L3,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
+    CONF_SOLAR_HOURLY_TODAY,
+    CONF_SOLAR_HOURLY_TOMORROW,
     DEFAULT_FUSE_LIMIT_A,
     DOMAIN,
     NAME,
@@ -93,7 +95,14 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
             CONF_FUSE_LIMIT, default=defaults.get(CONF_FUSE_LIMIT, DEFAULT_FUSE_LIMIT_A)
         ): vol.All(vol.Coerce(float), vol.Range(min=1, max=63)),
     }
-    for key in (*PV_POWER_ENTITIES, CONF_PRICE_FORECAST, CONF_BATTERY_POWER, CONF_SOLAR_FORECAST):
+    for key in (
+        *PV_POWER_ENTITIES,
+        CONF_PRICE_FORECAST,
+        CONF_BATTERY_POWER,
+        CONF_SOLAR_FORECAST,
+        CONF_SOLAR_HOURLY_TODAY,
+        CONF_SOLAR_HOURLY_TOMORROW,
+    ):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
         else:
@@ -162,6 +171,8 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_PRICE_FORECAST,
                 CONF_BATTERY_POWER,
                 CONF_SOLAR_FORECAST,
+                CONF_SOLAR_HOURLY_TODAY,
+                CONF_SOLAR_HOURLY_TOMORROW,
             ):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)

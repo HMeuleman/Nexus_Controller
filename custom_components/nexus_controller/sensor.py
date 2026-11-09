@@ -56,6 +56,7 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
     """Expose the latest numeric value from a configured input entity."""
 
     entity_description: NexusSensorDescription
+    _unrecorded_attributes = frozenset({"slots"})
 
     def __init__(
         self,
@@ -76,6 +77,13 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
     def native_value(self) -> float | None:
         """Return the selected input value."""
         return self.coordinator.data.get(self.entity_description.config_key)
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Expose the experimental plan only on its diagnostic entity."""
+        if self.entity_description.config_key == "experimental_quarter_plan":
+            return self.coordinator.experimental_quarter_plan
+        return None
 
     @callback
     def _handle_coordinator_update(self) -> None:

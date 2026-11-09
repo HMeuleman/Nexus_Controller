@@ -35,6 +35,7 @@ The setup dialog maps existing entities (each only once):
 | Price forecast (optional) | Defaults to the `forecast` attribute of the price sensor. The Zonneplan quarter-hour tariff sensor is recommended: it also carries `price_tax_excluded`, so the exact tax per slot is known |
 | Net battery power | W, positive is discharging, negative is charging. Required for control, shadow proposals and the earnings tracker |
 | Solar forecast (optional) | Expected remaining solar energy in kWh until sunset (the coming day at night) |
+| Solar ML hourly forecasts (optional) | Select separate sensors for today and tomorrow; used by the experimental planner |
 | Solis charge/discharge switches and power numbers | The four control entities |
 | Fuse limit per phase | Default 25 A |
 
@@ -61,7 +62,7 @@ Settings (configuration entities, values survive restarts):
 | Manual override timeout | 30 min | See manual override |
 | Exported energy paid including tax | off | On for 2026 rules, off from 2027 |
 
-Controls: **Battery control enabled** (off by default), **Manual maximum charge** and **Manual maximum discharge**.
+Controls: **Battery control enabled**, **Experimental planner override**, **Manual maximum charge** and **Manual maximum discharge**. Both automatic control and the planner override start off after every restart.
 
 Tracked values you can overwrite: **Battery earned total**, **Battery cycles total**, **Value of stored energy**.
 
@@ -79,7 +80,7 @@ The integration keeps a running cost basis for the energy in the battery. Chargi
 
 ### Decisions
 
-Each time the grid meter reports, the strategy decides, in this order:
+When the experimental planner override is off, each time the grid meter reports, the existing strategy decides, in this order:
 
 1. **Sell to the grid.** If the price after export tax beats the stored value plus the desired earnings, and the battery is above its reserve (at least 30 % and the minimum discharge SOC), it discharges at maximum power, but only in the dearest slots that the available energy can cover. If a dearer slot is coming that the energy can still cover, it waits for it.
 2. **Cover house load (NOM).** If the price reaches the discharge threshold, `stored value + desired earnings` (never below the floor setting), the house imports power and SOC is above the minimum, the PID discharges to bring the meter to zero. The threshold follows what the energy actually cost, so cheap stored energy is spent earlier and expensive stored energy is not sold at a loss.
@@ -87,7 +88,17 @@ Each time the grid meter reports, the strategy decides, in this order:
 4. **Charge at a low price.** At or below the maximum charging price it charges at the permitted maximum.
 5. **Charge from the grid for later.** The cheapest slots in the known forecast are paired with the dearest later slots. A pair is used when the dear price times the round-trip efficiency, minus the cheap price, still earns the desired amount. The planner chooses how many slots and at what power the total profit is highest. Expected solar surplus (from the solar forecast, the average daytime house load and the daylight left) is subtracted from what is bought, and the dear side is valued as the better of use in the house or export.
 
-Charging and discharging efficiency follows a measured curve (grid charging 85 % at 250 W, 87.5 % at 500 W, 90 % at 1 kW, 93.5 % at 2 kW, 97.5 % at 5 to 7.5 kW, 95.75 % at 10 kW; slightly higher for PV charging), so the sweet spot is a mid power, not the lowest.
+Charging efficiency follows an estimated curve (grid charging 85 % at 250 W, 87.5 % at 500 W, 90 % at 1 kW, 93.5 % at 2 kW, 97.5 % at 5 to 7.5 kW, 95.75 % at 10 kW; slightly higher for PV charging). Discharge efficiency is assumed to follow the grid-charging curve; it has not been measured here.
+
+### Experimental quarter-hour planner
+
+The planner estimates SOC, power and earnings across the available 15-minute prices. It compares multiple chronological charge/discharge cycles, values solar charging at the forgone export price, and applies the desired earnings threshold to each cycle. Export is valued according to the tax switch; NOM uses expected household demand and is allowed down to the minimum SOC. Export is reserved to the higher of 30 % and the minimum SOC.
+
+To test it, configure the same quarter-hour tariff sensor as both the current electricity price and price forecast, and inspect **Experimental quarter-hour plan** first. Then, only if you choose to control the inverter, turn on **Battery control enabled** and **Experimental planner override**. The planner selector alone never enables control. Switching it off returns to the existing strategy; manual overrides keep priority.
+
+When the plan or required readings are stale, a price, tax or earnings setting differs from the plan, or the current price does not match the quarter forecast, planner control stops rather than falling back to the existing strategy. `Control: status` reports `planner_price_mismatch` when the selected current price differs. The planner watchdog can stop control even without a new P1 report. Disabling battery control or an actuator error also clears the planner selection.
+
+This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and the assumed efficiency curve. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once per minute; a computation that exceeds its work limit is unavailable. Actual SOC and phase caps are checked again before each command.
 
 ### The PID loop
 
@@ -125,6 +136,14 @@ Set the timeout, then turn on **Manual maximum charge** or **Manual maximum disc
 ## Simulation tools
 
 The `sim/` directory has offline tools used to choose the defaults from real Home Assistant history: `build_trace.py` turns a history export into a trace, `closed_loop.py` simulates the strategy against the reconstructed load without the battery, and `replay.py` replays decisions without a plant model. They never talk to Home Assistant.
+
+The diagnostic **Experimental quarter-hour plan** exposes a `slots` attribute with timestamps, prices, estimated power (positive is discharge), charge source and end-of-slot SOC. It is separate from the existing shadow proposal; it controls the battery only when the explicit planner override and battery control switches are both on. It requires a contiguous 15-minute price forecast and uses only the remaining duration of the current slot when that slot is available.
+
+In Home Assistant, open the diagnostic sensor's attributes to inspect its plan and estimated profit. A custom forecast-capable dashboard card, such as ApexCharts Card, can plot the `slots` attribute as price, planned power and SOC series. The ordinary history graph cannot show these future values directly. A plan below the configured minimum SOC is unavailable and planner control remains idle.
+
+Optional hourly forecast inputs can be selected explicitly for today's Solar Forecast ML hybrid forecast and tomorrow's Solar Forecast ML forecast. The diagnostic displays each hourly kWh value divided evenly across its four quarters as `solar_forecast_kwh`. When the solar forecast covers every planned quarter, the grid-cycle estimate takes solar surplus and forgone export revenue into account. Otherwise it leaves solar out and reports `solar_included: false`; missing hours are not treated as zero.
+
+Solar-only charging is considered only when paired with a profitable discharge within the forecast. Missing forecast taxes use the configured fallback. The `slots` attribute is not stored in Recorder history.
 
 ## Development
 

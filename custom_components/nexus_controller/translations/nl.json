@@ -15,6 +15,8 @@
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
           "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
+          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, experimenteel plan)",
+          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, experimenteel plan)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
@@ -46,6 +48,8 @@
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
           "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
+          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, experimenteel plan)",
+          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, experimenteel plan)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
@@ -86,7 +90,8 @@
       "solar_surplus_forecast": {"name": "Verwacht zonneoverschot"},
       "control_mode": {"name": "Sturing: modus"},
       "control_power": {"name": "Sturing: vermogen"},
-      "control_status": {"name": "Sturing: status"}
+      "control_status": {"name": "Sturing: status"},
+      "experimental_quarter_plan": {"name": "Experimenteel kwartierplan"}
     },
     "number": {
       "reserved_room_w": {"name": "Gereserveerde ruimte per fase"},
@@ -114,6 +119,7 @@
     },
     "switch": {
       "control_enabled": {"name": "Batterijsturing ingeschakeld"},
+      "planner_override_enabled": {"name": "Experimentele plannerbesturing"},
       "manual_charge": {"name": "Handmatig maximaal laden"},
       "manual_discharge": {"name": "Handmatig maximaal ontladen"},
       "export_includes_tax": {"name": "Teruglevering vergoed incl. belasting"}

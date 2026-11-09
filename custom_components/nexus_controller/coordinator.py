@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime, timedelta
 
@@ -34,6 +35,8 @@ from .const import (
     CONF_GRID_POWER_L1,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
+    CONF_SOLAR_HOURLY_TODAY,
+    CONF_SOLAR_HOURLY_TOMORROW,
     DEFAULT_FUSE_LIMIT_A,
     DEFAULT_SAMPLE_INTERVAL_S,
     DOMAIN,
@@ -65,6 +68,7 @@ from .const import (
     SET_PID_KP,
     SET_PID_START_ERROR,
     SET_PID_STOP_ERROR,
+    SET_PLANNER_OVERRIDE,
     SET_RESERVED_ROOM,
     SET_SOLAR_BLOCK,
     SET_TAX,
@@ -77,9 +81,10 @@ from .const import (
 from .control import PIDMemory, PIDTuning, simulate_closed_loop_step
 from .dispatch import DispatchPlan, DispatchSettings
 from .net_charge import ExportSettings, NetChargeSettings
+from .quarter_planner import current_plan_dispatch, forecast_quarters_with_current, plan_quarters
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
-from .solar import daylight_hours, solar_surplus_kwh, update_load_average
+from .solar import daylight_hours, hourly_forecast_quarters, solar_surplus_kwh, update_load_average
 from .tracker import BatteryTracker
 from .utils import (
     calculate_phase_power_limits,
@@ -100,6 +105,7 @@ PHASE_SETTLE_S = 0.5
 # Gains are defined at this sample interval; faster meters get proportionally smaller steps.
 GAIN_REFERENCE_INTERVAL_S = 10.0
 HOLD_POWER_W = 50.0
+EXPERIMENTAL_PLAN_INTERVAL_S = 60.0
 
 
 class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
@@ -114,6 +120,11 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         self.entry = entry
         self.price_forecast: list[tuple[datetime, float]] = []
+        self.price_forecast_taxes: dict[datetime, float] = {}
+        self.experimental_quarter_plan: dict = {}
+        self._quarter_task: asyncio.Task | None = None
+        self._quarter_last_start: float | None = None
+        self._quarter_status = "unavailable"
         self.settings: dict[str, float | bool] = self._initial_settings()
         self.tracker = BatteryTracker(BATTERY_CAPACITY_KWH)
         self.sample_estimator = SampleIntervalEstimator(DEFAULT_SAMPLE_INTERVAL_S)
@@ -175,6 +186,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._unsubscribers.clear()
         if self._settle_cancel:
             self._settle_cancel()
+        if self._quarter_task is not None and not self._quarter_task.done():
+            self._quarter_task.cancel()
+            try:
+                await self._quarter_task
+            except asyncio.CancelledError:
+                pass
         if self._control_was_on:
             await self._async_release()
         await self._store.async_save(self.tracker.as_dict())
@@ -210,9 +227,16 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             await self.async_refresh()
         else:
             self._manual_mode = None
+            self.settings[SET_PLANNER_OVERRIDE] = False
             await self._async_release()
             self._control_status = "disabled"
             await self.async_refresh()
+
+    async def async_set_planner_override(self, enabled: bool) -> None:
+        """Change the planner routing without enabling battery control."""
+        self.settings[SET_PLANNER_OVERRIDE] = enabled
+        self._controlled_samples = self._grid_samples - 1
+        await self.async_refresh()
 
     @property
     def manual_mode(self) -> str | None:
@@ -319,8 +343,190 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
         plan = self._plan(data, now, battery_power, solar_fill)
         await self._async_control(data, plan, phases, battery_power, limits)
+        self._schedule_experimental_quarter_plan(data, now, limits)
         self._store.async_delay_save(self.tracker.as_dict, 60)
         return data
+
+    def _schedule_experimental_quarter_plan(
+        self,
+        data: dict[str, float | str | None],
+        now: datetime,
+        limits: tuple[float | None, float | None],
+    ) -> None:
+        """Schedule diagnostic planning without delaying battery control."""
+        data["experimental_quarter_plan"] = self._quarter_status
+        started = time.monotonic()
+        if self._quarter_task is not None and not self._quarter_task.done():
+            return
+        if (
+            self._quarter_last_start is not None
+            and started - self._quarter_last_start < EXPERIMENTAL_PLAN_INTERVAL_S
+        ):
+            return
+        self._quarter_last_start = started
+        self._quarter_task = self.hass.async_create_task(
+            self._async_run_experimental_quarter_plan(data.copy(), now, limits)
+        )
+
+    async def _async_run_experimental_quarter_plan(
+        self,
+        data: dict[str, float | str | None],
+        now: datetime,
+        limits: tuple[float | None, float | None],
+    ) -> None:
+        """Update the diagnostic snapshot independently of the control cycle."""
+        try:
+            await self._async_experimental_quarter_plan(data, now, limits)
+        except Exception:
+            self.experimental_quarter_plan = {}
+            self._quarter_status = "unavailable"
+            _LOGGER.exception("Experimental quarter plan failed")
+            return
+        self._quarter_status = str(data.get("experimental_quarter_plan", "unavailable"))
+        if self._quarter_status != "experimental":
+            self.experimental_quarter_plan = {}
+
+    async def _async_experimental_quarter_plan(
+        self,
+        data: dict[str, float | str | None],
+        now: datetime,
+        limits: tuple[float | None, float | None],
+    ) -> None:
+        """Publish an offline grid-cycle estimate, independent of battery control."""
+        data["experimental_quarter_plan"] = "unavailable"
+        forecast = forecast_quarters_with_current(self.price_forecast, now)
+        soc = data.get(CONF_BATTERY_SOC)
+        minimum_soc = float(self.settings[SET_MIN_DISCHARGE_SOC])
+        if (
+            not forecast
+            or not isinstance(soc, (int, float))
+            or soc < minimum_soc
+            or limits[0] is None
+            or limits[1] is None
+            or min(limits) <= 0
+        ):
+            return
+        house_load = self.tracker.state.avg_daytime_load_w
+        tax = 0.0 if self.settings[SET_EXPORT_INCLUDES_TAX] else data.get("tax_used")
+        if not isinstance(tax, (int, float)) or tax < 0:
+            return
+        forecast_taxes = [
+            0.0
+            if self.settings[SET_EXPORT_INCLUDES_TAX]
+            else self.price_forecast_taxes.get(start, float(self.settings[SET_TAX]))
+            for start, _, _ in forecast
+        ]
+        solar_quarters = self._experimental_solar_quarters(now)
+        solar_values = [
+            solar_quarters[start] * duration / 0.25 if start in solar_quarters else None
+            for start, _, duration in forecast
+        ]
+        solar_complete = all(value is not None for value in solar_values)
+        solar_input = (
+            [value for value in solar_values if value is not None] if solar_complete else None
+        )
+        min_earnings = float(self.settings[SET_MIN_EARNINGS])
+        stored_value = self.tracker.state.stored_value
+        try:
+            result = await self.hass.async_add_executor_job(
+                lambda: plan_quarters(
+                    [price for _, price, _ in forecast],
+                    capacity_kwh=BATTERY_CAPACITY_KWH,
+                    initial_soc_pct=soc,
+                    min_soc_pct=minimum_soc,
+                    max_power_w=min(limits),
+                    efficiency=math.sqrt(ROUND_TRIP_EFFICIENCY),
+                    min_profit_eur_per_kwh=min_earnings,
+                    export_tax_eur_per_kwh=tax,
+                    house_load_w=house_load or 0.0,
+                    initial_value_eur_per_kwh=stored_value,
+                    export_taxes_eur_per_kwh=forecast_taxes,
+                    solar_kwh=solar_input,
+                    durations_hours=[duration for _, _, duration in forecast],
+                    use_power_efficiency=True,
+                    export_reserve_soc_pct=max(EXPORT_RESERVE_SOC_PCT, minimum_soc),
+                )
+            )
+        except ValueError:
+            return
+        except Exception:
+            _LOGGER.exception("Experimental quarter plan failed")
+            return
+        self.experimental_quarter_plan = {
+            "generated_at": now.isoformat(),
+            "minimum_earnings_eur_kwh": min_earnings,
+            "estimated_profit_eur": round(result.profit_eur, 4),
+            "house_load_w": house_load,
+            "export_tax_eur_kwh": tax,
+            "efficiency_model": "power-dependent estimate; discharge uses grid-charge curve",
+            "solar_included": solar_complete,
+            "limitations": (
+                "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
+                "unless forecast is complete; missing forecast tax uses fallback"
+            ),
+            "slots": [
+                {
+                    "start": max(start, now).isoformat(),
+                    "forecast_start": start.isoformat(),
+                    "duration_hours": duration,
+                    "price_eur_kwh": price,
+                    "export_tax_eur_kwh": slot_tax,
+                    "power_w": round(power, 1),
+                    "charge_source": charge_source,
+                    "soc_pct": round(predicted_soc, 2),
+                }
+                for (start, price, duration), slot_tax, power, charge_source, predicted_soc in zip(
+                    forecast,
+                    forecast_taxes,
+                    result.power_w,
+                    result.charge_source,
+                    result.soc_pct,
+                    strict=True,
+                )
+            ],
+        }
+        for slot, solar in zip(self.experimental_quarter_plan["slots"], solar_values, strict=True):
+            slot["solar_forecast_kwh"] = solar
+            demand = max(
+                0.0,
+                (house_load or 0.0) - (solar or 0.0) * 1000 / slot["duration_hours"],
+            )
+            slot["discharge_mode"] = (
+                "nom"
+                if 0 < slot["power_w"] <= demand
+                else "export"
+                if slot["power_w"] > 0
+                else "none"
+            )
+        data["experimental_quarter_plan"] = "experimental"
+
+    def _experimental_solar_quarters(self, now: datetime) -> dict[datetime, float]:
+        """Read selected Solar ML hourly forecasts for diagnostics, without guessing entity IDs."""
+        timezone = dt_util.get_time_zone(self.hass.config.time_zone)
+        if timezone is None:
+            return {}
+        today = now.astimezone(timezone).date()
+        quarters: dict[datetime, float] = {}
+        for key, day_offset, attribute in (
+            (CONF_SOLAR_HOURLY_TODAY, 0, "hourly_forecast"),
+            (CONF_SOLAR_HOURLY_TOMORROW, 1, "hours"),
+        ):
+            entity_id = self.configured_entity_id(key)
+            state = self.hass.states.get(entity_id) if entity_id else None
+            if (
+                state is None
+                or state.state in ("unknown", "unavailable")
+                or str(state.attributes.get("unit_of_measurement", "")).casefold() != "kwh"
+            ):
+                continue
+            quarters.update(
+                hourly_forecast_quarters(
+                    state.attributes.get(attribute),
+                    day=today + timedelta(days=day_offset),
+                    timezone=timezone,
+                )
+            )
+        return quarters
 
     def _read_prices(self, data: dict[str, float | str | None], now: datetime) -> None:
         """Parse the forecast and derive the current tax-free price."""
@@ -332,6 +538,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         forecast = forecast_state.attributes.get("forecast") if forecast_state is not None else None
         self.price_forecast = parse_price_forecast(forecast)
         taxes = parse_forecast_tax(forecast)
+        self.price_forecast_taxes = taxes
         started = [start for start in taxes if start <= now]
         tax = taxes[max(started)] if started else float(self.settings[SET_TAX])
         data["tax_used"] = tax
@@ -535,12 +742,25 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if not self.settings[SET_CONTROL_ENABLED] and self._manual_mode is None:
             data["control_status"] = self._control_status if self._control_was_on else "disabled"
             return
+        planner_active = self._manual_mode is None and self.settings.get(
+            SET_PLANNER_OVERRIDE, False
+        )
+        watchdog_plan = None
         if self._controlled_samples == self._grid_samples:
-            data["control_status"] = self._control_status
-            return
+            if planner_active and self._control_was_on:
+                watchdog_plan = self._planner_action(
+                    data, dt_util.utcnow(), phases, battery_power, limits
+                )
+            if watchdog_plan is None or watchdog_plan.mode != "idle":
+                data["control_status"] = self._control_status
+                return
         self._controlled_samples = self._grid_samples
         self._control_was_on = True
 
+        if planner_active:
+            plan = watchdog_plan or self._planner_action(
+                data, dt_util.utcnow(), phases, battery_power, limits
+            )
         command = plan
         status = "ok"
         if self._manual_mode:
@@ -563,7 +783,17 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 # A closed loop cancels any added output, so the offset shifts the setpoint:
                 # discharge settles at this much export, charge at this much import.
                 shift = offset if plan.mode == "discharge" else -offset
-                command = self._pid_command(plan, sum(phases) + shift, battery_power, limits)
+                pid_limits = limits
+                if planner_active:
+                    pid_limits = (
+                        min(limits[0], plan.power_w) if plan.mode == "charge" else limits[0],
+                        min(limits[1], plan.power_w) if plan.mode == "discharge" else limits[1],
+                    )
+                command = self._pid_command(plan, sum(phases) + shift, battery_power, pid_limits)
+                if planner_active and command.mode == plan.mode:
+                    command = DispatchPlan(
+                        command.mode, min(command.power_w, plan.power_w), command.reason
+                    )
                 status = command.reason
         else:
             self._pid_memory = PIDMemory()
@@ -581,6 +811,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         except ActuatorError as err:
             _LOGGER.error("Battery control stopped: %s", err)
             self.settings[SET_CONTROL_ENABLED] = False
+            self.settings[SET_PLANNER_OVERRIDE] = False
             self._manual_mode = None
             await self._async_release()
             self._control_status = f"error: {err}"
@@ -661,6 +892,120 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if state is None:
             return None
         return sum_power_states([(state.state, state.attributes.get("unit_of_measurement"))])
+
+    def _planner_measurement_ages(self, now: datetime) -> tuple[float, ...] | None:
+        """Return ages of the configured phase, SOC and battery power reports."""
+        ages = []
+        for key in (*PHASE_POWER_ENTITIES, CONF_BATTERY_SOC, CONF_BATTERY_POWER):
+            entity_id = self.configured_entity_id(key)
+            state = self.hass.states.get(entity_id) if entity_id else None
+            if state is None or state.state in ("unknown", "unavailable"):
+                return None
+            reported = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+            if not isinstance(reported, datetime) or reported.tzinfo is None:
+                return None
+            ages.append(now.timestamp() - reported.timestamp())
+        return tuple(ages)
+
+    def _planner_action(
+        self,
+        data: dict[str, float | str | None],
+        now: datetime,
+        phases: tuple,
+        battery_power: float | None,
+        limits: tuple[float | None, float | None],
+    ) -> DispatchPlan:
+        """Validate the current experimental plan against live inputs without writing."""
+        idle = DispatchPlan("idle", 0.0, "planner_unavailable_or_stale")
+        if self._quarter_status != "experimental" or now.tzinfo is None:
+            return idle
+        try:
+            created = datetime.fromisoformat(self.experimental_quarter_plan["generated_at"])
+            age = now.timestamp() - created.timestamp()
+            if created.tzinfo is None or not 0 <= age <= EXPERIMENTAL_PLAN_INTERVAL_S * 2:
+                return idle
+            planned_earnings = float(self.experimental_quarter_plan["minimum_earnings_eur_kwh"])
+            current_earnings = float(self.settings[SET_MIN_EARNINGS])
+            if not math.isfinite(planned_earnings) or planned_earnings != current_earnings:
+                return idle
+            slots = self.experimental_quarter_plan["slots"]
+            current = None
+            observed_forecast = {start.timestamp(): price for start, price in self.price_forecast}
+            for slot in slots:
+                tariff_start = datetime.fromisoformat(slot["forecast_start"])
+                if tariff_start.tzinfo is None:
+                    return idle
+                if tariff_start.timestamp() + 900 > now.timestamp():
+                    planned_quote = float(slot["price_eur_kwh"])
+                    observed_quote = observed_forecast.get(tariff_start.timestamp())
+                    planned_tax = float(slot["export_tax_eur_kwh"])
+                    current_tax = (
+                        0.0
+                        if self.settings[SET_EXPORT_INCLUDES_TAX]
+                        else self.price_forecast_taxes.get(
+                            tariff_start, float(self.settings[SET_TAX])
+                        )
+                    )
+                    if (
+                        not math.isfinite(planned_quote)
+                        or not math.isfinite(planned_tax)
+                        or not math.isfinite(current_tax)
+                        or abs(current_tax - planned_tax) > 1e-6
+                        or observed_quote is None
+                        or not math.isfinite(observed_quote)
+                        or abs(observed_quote - planned_quote) > 1e-6
+                    ):
+                        return idle
+                start = datetime.fromisoformat(slot["start"])
+                end = start.timestamp() + float(slot["duration_hours"]) * 3600
+                if start.tzinfo is not None and start.timestamp() <= now.timestamp() < end:
+                    current = slot
+            if current is None:
+                return idle
+            forecast_start = datetime.fromisoformat(current["forecast_start"])
+            quote = float(current["price_eur_kwh"])
+            current_price = float(data[CONF_ELECTRICITY_PRICE])
+            matching_price = next(
+                (
+                    price
+                    for start, price in self.price_forecast
+                    if start.timestamp() == forecast_start.timestamp()
+                ),
+                None,
+            )
+            if (
+                forecast_start.tzinfo is None
+                or not forecast_start.timestamp()
+                <= now.timestamp()
+                < forecast_start.timestamp() + 900
+                or not math.isfinite(quote)
+                or not math.isfinite(current_price)
+                or matching_price is None
+                or abs(matching_price - quote) > 1e-6
+            ):
+                return idle
+            if abs(current_price - quote) > 1e-6:
+                return DispatchPlan("idle", 0.0, "planner_price_mismatch")
+            interval = float(self.sample_estimator.interval_s)
+            if not math.isfinite(interval) or interval <= 0:
+                return idle
+            minimum_soc = float(self.settings[SET_MIN_DISCHARGE_SOC])
+            return current_plan_dispatch(
+                current,
+                now=now,
+                soc_pct=data.get(CONF_BATTERY_SOC),  # type: ignore[arg-type]
+                min_soc_pct=minimum_soc,
+                export_reserve_soc_pct=max(EXPORT_RESERVE_SOC_PCT, minimum_soc),
+                max_charge_w=limits[0],
+                max_discharge_w=limits[1],
+                grid_import_w=sum(phases) if None not in phases else None,
+                battery_power_w=battery_power,
+                pv_power_w=data.get(PV_POWER_ENTITIES[0]),  # type: ignore[arg-type]
+                measurement_ages_s=self._planner_measurement_ages(now),
+                max_measurement_age_s=max(30.0, interval * 3),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
+            return idle
 
     def _number(self, key: str, default: float) -> float:
         """Return a configured numeric option or its safe default."""

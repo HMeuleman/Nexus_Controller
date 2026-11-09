@@ -74,9 +74,11 @@ class BatteryActuator:
                 # Toggle off/on so the inverter sees a fresh enable, not an unchanged value.
                 await self._async_start(mode, power_w, other_off=False)
                 return "keepalive"
-            if abs(power_w - self._power_w) < POWER_CHANGE_DEADBAND_W:
+            if 0 <= power_w - self._power_w < POWER_CHANGE_DEADBAND_W:
                 return "holding"
-            if now - self._last_write < max(min_interval_s, MIN_WRITE_INTERVAL_S):
+            if power_w >= self._power_w and now - self._last_write < max(
+                min_interval_s, MIN_WRITE_INTERVAL_S
+            ):
                 return "rate_limited"
             self._power_w = await self._async_set_power(mode, power_w)
             self._last_write = now
@@ -146,15 +148,20 @@ class BatteryActuator:
         if factor is None:
             raise ActuatorError(f"{entity_id} has unsupported unit {unit!r}")
         value = power_w / factor
-        step = state.attributes.get("step")
-        if isinstance(step, (int, float)) and step > 0:
-            value = round(value / step) * step
         minimum = state.attributes.get("min")
         maximum = state.attributes.get("max")
-        if isinstance(maximum, (int, float)):
+        step = state.attributes.get("step")
+        if isinstance(maximum, (int, float)) and math.isfinite(maximum):
             value = min(value, maximum)
-        if isinstance(minimum, (int, float)):
-            value = max(value, minimum)
+        origin = 0.0
+        if isinstance(minimum, (int, float)) and math.isfinite(minimum):
+            if value < minimum:
+                raise ActuatorError(f"{entity_id} minimum exceeds requested power")
+            origin = minimum
+        if isinstance(step, (int, float)) and math.isfinite(step) and step > 0:
+            value = origin + math.floor((value - origin) / step) * step
+        if value <= 0:
+            raise ActuatorError(f"{entity_id} cannot represent requested power")
         await self._call("number", "set_value", {"entity_id": entity_id, "value": value})
         return value * factor
 

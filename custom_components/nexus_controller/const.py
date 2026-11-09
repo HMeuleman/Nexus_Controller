@@ -16,6 +16,8 @@ CONF_ELECTRICITY_PRICE: Final = "electricity_price_entity"
 CONF_PRICE_FORECAST: Final = "price_forecast_entity"
 CONF_BATTERY_POWER: Final = "battery_power_entity"
 CONF_SOLAR_FORECAST: Final = "solar_forecast_entity"
+CONF_SOLAR_HOURLY_TODAY: Final = "solar_hourly_today_entity"
+CONF_SOLAR_HOURLY_TOMORROW: Final = "solar_hourly_tomorrow_entity"
 CONF_CHARGE_ENABLE: Final = "charge_enable_entity"
 CONF_CHARGE_POWER: Final = "charge_power_entity"
 CONF_DISCHARGE_ENABLE: Final = "discharge_enable_entity"
@@ -53,6 +55,7 @@ MANUAL_DISCHARGE: Final = "manual_discharge"
 SET_DISCHARGE_OFFSET: Final = "discharge_offset_w"
 SET_EXPORT_INCLUDES_TAX: Final = "export_includes_tax"
 SET_CONTROL_ENABLED: Final = "control_enabled"
+SET_PLANNER_OVERRIDE: Final = "planner_override_enabled"
 
 # The two writable tracker values, also exposed as numbers.
 TRACK_EARNED_TOTAL: Final = "earned_total"
@@ -94,6 +97,7 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_MANUAL_TIMEOUT: 30.0,
     SET_EXPORT_INCLUDES_TAX: False,
     SET_CONTROL_ENABLED: False,
+    SET_PLANNER_OVERRIDE: False,
 }
 DEFAULT_STORED_VALUE: Final = 0.10
 BATTERY_CAPACITY_KWH: Final = 20.8
@@ -161,6 +165,7 @@ ENTITY_LABELS: Final = {
     "control_mode": ("control_mode", None),
     "control_power": ("control_power", "W"),
     "control_status": ("control_status", None),
+    "experimental_quarter_plan": ("experimental_quarter_plan", None),
 }
 
 ENTITY_PRECISION: Final = {

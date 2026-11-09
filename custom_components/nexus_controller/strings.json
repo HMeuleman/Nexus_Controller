@@ -15,6 +15,8 @@
           "electricity_price_entity": "Electricity price sensor",
           "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
           "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
+          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, experimental plan)",
+          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, experimental plan)",
           "charge_enable_entity": "Battery charge switch",
           "charge_power_entity": "Battery charge power",
           "discharge_enable_entity": "Battery discharge switch",
@@ -46,6 +48,8 @@
           "electricity_price_entity": "Electricity price sensor",
           "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
           "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
+          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, experimental plan)",
+          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, experimental plan)",
           "charge_enable_entity": "Battery charge switch",
           "charge_power_entity": "Battery charge power",
           "discharge_enable_entity": "Battery discharge switch",
@@ -86,7 +90,8 @@
       "solar_surplus_forecast": {"name": "Expected solar surplus"},
       "control_mode": {"name": "Control: mode"},
       "control_power": {"name": "Control: power"},
-      "control_status": {"name": "Control: status"}
+      "control_status": {"name": "Control: status"},
+      "experimental_quarter_plan": {"name": "Experimental quarter-hour plan"}
     },
     "number": {
       "reserved_room_w": {"name": "Reserved room per phase"},
@@ -114,6 +119,7 @@
     },
     "switch": {
       "control_enabled": {"name": "Battery control enabled"},
+      "planner_override_enabled": {"name": "Experimental planner override"},
       "manual_charge": {"name": "Manual maximum charge"},
       "manual_discharge": {"name": "Manual maximum discharge"},
       "export_includes_tax": {"name": "Exported energy paid including tax"}
