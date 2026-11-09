@@ -82,7 +82,7 @@ The integration keeps a running cost basis for the energy in the battery. Chargi
 
 When the experimental planner override is off, each time the grid meter reports, the existing strategy decides, in this order:
 
-1. **Sell to the grid.** If the price after export tax beats the stored value plus the desired earnings, and the battery is above its reserve (at least 30 % and the minimum discharge SOC), it discharges at maximum power, but only in the dearest slots that the available energy can cover. If a dearer slot is coming that the energy can still cover, it waits for it.
+1. **Sell to the grid.** If the price after export tax beats the stored value plus the desired earnings, and the battery is above its export reserve, it discharges at maximum power, but only in the dearest slots that the available energy can cover. If a dearer slot is coming that the energy can still cover, it waits for it. When export is paid including tax, the export reserve is the configured minimum SOC; otherwise it is the higher of 30 % and the minimum SOC.
 2. **Cover house load (NOM).** If the price reaches the discharge threshold, `stored value + desired earnings` (never below the floor setting), the house imports power and SOC is above the minimum, the PID discharges to bring the meter to zero. The threshold follows what the energy actually cost, so cheap stored energy is spent earlier and expensive stored energy is not sold at a loss.
 3. **Charge from PV surplus.** When the house exports and the battery is not full, the PID charges to absorb the surplus.
 4. **Charge at a low price.** At or below the maximum charging price it charges at the permitted maximum.
@@ -92,7 +92,7 @@ Charging efficiency follows an estimated curve (grid charging 85 % at 250 W, 87.
 
 ### Experimental quarter-hour planner
 
-The planner estimates SOC, power and earnings across the available 15-minute prices. It compares multiple chronological charge/discharge cycles, values solar charging at the forgone export price, and applies the desired earnings threshold to each cycle. Export is valued according to the tax switch; NOM uses expected household demand and is allowed down to the minimum SOC. Export is reserved to the higher of 30 % and the minimum SOC.
+The planner estimates SOC, power and earnings across the available 15-minute prices. It compares multiple chronological charge/discharge cycles, values solar charging at the forgone export price, and applies the desired earnings threshold to each cycle. Export is valued according to the tax switch; NOM uses expected household demand and is allowed down to the minimum SOC. With tax-inclusive export, the minimum SOC is also the export limit. Otherwise export stops at the higher of 30 % and the minimum SOC.
 
 To test it, configure the same quarter-hour tariff sensor as both the current electricity price and price forecast, and inspect **Experimental quarter-hour plan** first. Then, only if you choose to control the inverter, turn on **Battery control enabled** and **Experimental planner override**. The planner selector alone never enables control. Switching it off returns to the existing strategy; manual overrides keep priority.
 

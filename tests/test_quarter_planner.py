@@ -30,6 +30,7 @@ from custom_components.nexus_controller.const import (
     SET_MIN_EARNINGS,
     SET_PLANNER_OVERRIDE,
     SET_TAX,
+    SETTING_DEFAULTS,
 )
 from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.dispatch import DispatchPlan
@@ -970,6 +971,99 @@ def test_coordinator_rejects_stale_plan_and_changed_current_price():
     assert action(now + timedelta(seconds=121)).mode == "idle"
     coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
     assert action(now).mode == "idle"
+
+
+def test_coordinator_export_reserve_follows_tax_policy():
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    slot = {
+        "start": now.isoformat(),
+        "forecast_start": now.isoformat(),
+        "duration_hours": 0.25,
+        "price_eur_kwh": 0.50,
+        "export_tax_eur_kwh": 0.0,
+        "power_w": 5000.0,
+        "discharge_mode": "export",
+    }
+    coordinator = SimpleNamespace(
+        experimental_quarter_plan={
+            "generated_at": now.isoformat(),
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [slot],
+        },
+        _quarter_status="experimental",
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        sample_estimator=SimpleNamespace(interval_s=10),
+        price_forecast=[(now, 0.50)],
+        price_forecast_taxes={},
+        _planner_measurement_ages=lambda moment: (1, 1, 1, 1, 1),
+    )
+    data = {CONF_BATTERY_SOC: 20.0, CONF_ELECTRICITY_PRICE: 0.50}
+
+    def action():
+        return NexusCoordinator._planner_action(
+            coordinator, data, now, (100.0, 100.0, 100.0), 0.0, (3000.0, 3000.0)
+        )
+
+    assert action().mode == "discharge"
+    data[CONF_BATTERY_SOC] = 10.0
+    assert action().mode == "idle"
+    data[CONF_BATTERY_SOC] = 20.0
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
+    slot["export_tax_eur_kwh"] = 0.11
+    assert action().mode == "idle"
+
+
+def test_existing_strategy_export_reserve_follows_tax_policy():
+    coordinator = SimpleNamespace(
+        settings={**SETTING_DEFAULTS, SET_MIN_DISCHARGE_SOC: 10, SET_EXPORT_INCLUDES_TAX: True},
+        _discharge_threshold=lambda: 0.25,
+    )
+
+    assert NexusCoordinator._shadow_settings(coordinator, 0.11).export.reserve_soc_pct == 10
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
+    assert NexusCoordinator._shadow_settings(coordinator, 0.11).export.reserve_soc_pct == 30
+    coordinator.settings[SET_MIN_DISCHARGE_SOC] = 40
+    assert NexusCoordinator._shadow_settings(coordinator, 0.11).export.reserve_soc_pct == 40
+
+
+def test_diagnostic_planner_uses_conditional_export_reserve():
+    now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
+    start = now.replace(minute=15)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.20), (start + timedelta(minutes=15), 0.70)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+    )
+    data = {CONF_BATTERY_SOC: 10.0, "tax_used": 0.11}
+
+    def run():
+        asyncio.run(
+            NexusCoordinator._async_experimental_quarter_plan(
+                coordinator, data, now, (10000, 10000)
+            )
+        )
+        return coordinator.experimental_quarter_plan["slots"][1]["power_w"]
+
+    assert run() > 500
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
+    assert 0 < run() <= 500
 
 
 def test_coordinator_rejects_a_future_tariff_as_the_current_slot():

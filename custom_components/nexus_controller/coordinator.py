@@ -108,6 +108,11 @@ HOLD_POWER_W = 50.0
 EXPERIMENTAL_PLAN_INTERVAL_S = 60.0
 
 
+def _export_reserve_soc(minimum_soc: float, export_includes_tax: bool) -> float:
+    """Apply no additional export reserve when export is paid including tax."""
+    return minimum_soc if export_includes_tax else max(EXPORT_RESERVE_SOC_PCT, minimum_soc)
+
+
 class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     """Read configured HA entities, plan the strategy, track results and optionally control."""
 
@@ -427,6 +432,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         min_earnings = float(self.settings[SET_MIN_EARNINGS])
         stored_value = self.tracker.state.stored_value
+        export_reserve = _export_reserve_soc(
+            minimum_soc, bool(self.settings[SET_EXPORT_INCLUDES_TAX])
+        )
         try:
             result = await self.hass.async_add_executor_job(
                 lambda: plan_quarters(
@@ -444,7 +452,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     solar_kwh=solar_input,
                     durations_hours=[duration for _, _, duration in forecast],
                     use_power_efficiency=True,
-                    export_reserve_soc_pct=max(EXPORT_RESERVE_SOC_PCT, minimum_soc),
+                    export_reserve_soc_pct=export_reserve,
                 )
             )
         except ValueError:
@@ -701,7 +709,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 ROUND_TRIP_EFFICIENCY,
                 export_tax,
                 0.0,
-                max(EXPORT_RESERVE_SOC_PCT, float(self.settings[SET_MIN_DISCHARGE_SOC])),
+                _export_reserve_soc(
+                    float(self.settings[SET_MIN_DISCHARGE_SOC]),
+                    bool(self.settings[SET_EXPORT_INCLUDES_TAX]),
+                ),
                 MAX_BATTERY_POWER_W,
             ),
             capacity_kwh=BATTERY_CAPACITY_KWH,
@@ -995,7 +1006,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 now=now,
                 soc_pct=data.get(CONF_BATTERY_SOC),  # type: ignore[arg-type]
                 min_soc_pct=minimum_soc,
-                export_reserve_soc_pct=max(EXPORT_RESERVE_SOC_PCT, minimum_soc),
+                export_reserve_soc_pct=_export_reserve_soc(
+                    minimum_soc, bool(self.settings[SET_EXPORT_INCLUDES_TAX])
+                ),
                 max_charge_w=limits[0],
                 max_discharge_w=limits[1],
                 grid_import_w=sum(phases) if None not in phases else None,
