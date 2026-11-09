@@ -105,7 +105,8 @@ PHASE_SETTLE_S = 0.5
 # Gains are defined at this sample interval; faster meters get proportionally smaller steps.
 GAIN_REFERENCE_INTERVAL_S = 10.0
 HOLD_POWER_W = 50.0
-EXPERIMENTAL_PLAN_INTERVAL_S = 60.0
+EXPERIMENTAL_PLAN_INTERVAL_S = 300.0
+EXPERIMENTAL_PLAN_MAX_AGE_S = EXPERIMENTAL_PLAN_INTERVAL_S + 60.0
 
 
 def _export_reserve_soc(minimum_soc: float, export_includes_tax: bool) -> float:
@@ -933,7 +934,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         try:
             created = datetime.fromisoformat(self.experimental_quarter_plan["generated_at"])
             age = now.timestamp() - created.timestamp()
-            if created.tzinfo is None or not 0 <= age <= EXPERIMENTAL_PLAN_INTERVAL_S * 2:
+            if created.tzinfo is None or not 0 <= age <= EXPERIMENTAL_PLAN_MAX_AGE_S:
                 return idle
             planned_earnings = float(self.experimental_quarter_plan["minimum_earnings_eur_kwh"])
             current_earnings = float(self.settings[SET_MIN_EARNINGS])

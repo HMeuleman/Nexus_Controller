@@ -98,7 +98,7 @@ To test it, configure the same quarter-hour tariff sensor as both the current el
 
 When the plan or required readings are stale, a price, tax or earnings setting differs from the plan, or the current price does not match the quarter forecast, planner control stops rather than falling back to the existing strategy. `Control: status` reports `planner_price_mismatch` when the selected current price differs. The planner watchdog can stop control even without a new P1 report. Disabling battery control or an actuator error also clears the planner selection.
 
-This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and the assumed efficiency curve. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once per minute; a computation that exceeds its work limit is unavailable. Actual SOC and phase caps are checked again before each command.
+This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and the assumed efficiency curve. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once every five minutes; a computation that exceeds its work limit is unavailable. Actual SOC and phase caps are checked again before each command.
 
 ### The PID loop
 

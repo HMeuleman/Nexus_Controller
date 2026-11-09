@@ -968,7 +968,8 @@ def test_coordinator_rejects_stale_plan_and_changed_current_price():
     assert action(now).power_w == 3000.0
     mismatch = action(now, {**data, CONF_ELECTRICITY_PRICE: 0.60})
     assert (mismatch.mode, mismatch.reason) == ("idle", "planner_price_mismatch")
-    assert action(now + timedelta(seconds=121)).mode == "idle"
+    assert action(now + timedelta(seconds=300)).mode == "discharge"
+    assert action(now + timedelta(seconds=361)).mode == "idle"
     coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
     assert action(now).mode == "idle"
 
@@ -1669,6 +1670,35 @@ def test_diagnostic_planning_is_backgrounded_and_does_not_duplicate_work():
         NexusCoordinator._schedule_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
         assert coordinator._quarter_task is task
         assert data["experimental_quarter_plan"] == "experimental"
+
+    asyncio.run(scenario())
+
+
+def test_diagnostic_planning_runs_every_five_minutes(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def scenario():
+        run = AsyncMock()
+        coordinator = SimpleNamespace(
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="unavailable",
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+        now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        await coordinator._quarter_task
+
+        clock[0] += 299
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        assert run.await_count == 1
+
+        clock[0] += 1
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        await coordinator._quarter_task
+        assert run.await_count == 2
 
     asyncio.run(scenario())
 
