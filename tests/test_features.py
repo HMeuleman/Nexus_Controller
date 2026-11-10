@@ -25,27 +25,24 @@ PLAN = {
 }
 
 
-def test_efficiency_follows_the_measured_curve():
-    assert inverter_efficiency(500) == pytest.approx(0.875)
-    assert inverter_efficiency(100) == pytest.approx(0.85)
-    assert inverter_efficiency(1500) == pytest.approx(0.9175)
-    assert inverter_efficiency(6000) == pytest.approx(0.975)
-    assert inverter_efficiency(10000) == pytest.approx(0.9575)
-    assert inverter_efficiency(500, pv_share=1.0) == pytest.approx(0.90)
-    assert inverter_efficiency(-5000) == pytest.approx(0.975)
+def test_efficiency_is_fixed_for_power_and_source():
+    for power in (100, 500, 1500, 6000, 10000, -5000):
+        assert inverter_efficiency(power) == pytest.approx(0.97)
+        assert inverter_efficiency(power, pv_share=1.0) == pytest.approx(0.97)
 
 
-def test_charge_goes_to_the_efficient_mid_power_not_the_lowest():
+def test_charge_power_fills_headroom_at_fixed_efficiency():
     prices = [0.10, 0.10, 0.10, 0.60, 0.60, 0.60]
 
     plan = plan_net_charge(prices_eur_kwh=prices, headroom_kwh=10.0, **PLAN)
 
     assert plan.charge
-    assert plan.slots == 2  # 10 kWh in 3 slots would be ~3.5 kW, 2 slots is ~5.1 kW and better
-    assert 4800 < plan.power_w < 5400
+    assert plan.slots == 3
+    assert plan.power_w == pytest.approx(10_000 / (3 * 0.97))
+    assert plan.round_trip == pytest.approx(0.97**2)
 
 
-def test_selling_to_the_grid_at_mid_power_makes_a_small_spread_pay():
+def test_house_and_untaxed_export_use_the_same_efficiency():
     prices = [0.3486, 0.5577, 0.52, 0.50, 0.45]
     plan = {**PLAN, "discharge_power_w": 500.0, "min_earnings_eur_kwh": 0.15}
 
@@ -54,9 +51,10 @@ def test_selling_to_the_grid_at_mid_power_makes_a_small_spread_pay():
         prices_eur_kwh=prices, headroom_kwh=5.0, export_tax_eur_kwh=0.0, **plan
     )
 
-    assert not house_only.charge
+    assert house_only.charge
     assert with_export.charge
-    assert 4500 < with_export.power_w < 7600
+    assert with_export.power_w == pytest.approx(house_only.power_w)
+    assert with_export.round_trip == pytest.approx(house_only.round_trip)
 
 
 def test_expensive_current_slot_does_not_charge():
@@ -82,7 +80,7 @@ def test_partial_fill_uses_full_power_in_the_profitable_slot_only():
     assert plan.power_w <= 10000
 
 
-def test_unfinished_current_slot_makes_the_plan_use_more_slots():
+def test_unfinished_current_slot_increases_charge_power():
     prices = [0.10, 0.10, 0.10, 0.60, 0.60, 0.60]
     full = plan_net_charge(prices_eur_kwh=prices, headroom_kwh=6.0, **PLAN)
     late = plan_net_charge(
@@ -90,7 +88,8 @@ def test_unfinished_current_slot_makes_the_plan_use_more_slots():
     )
 
     assert late.charge
-    assert late.slots > full.slots
+    assert late.slots == full.slots
+    assert late.power_w > full.power_w
 
 
 def test_tracker_counts_cycles_per_soc_gain_and_resets_daily():

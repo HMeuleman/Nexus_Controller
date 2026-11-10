@@ -48,6 +48,7 @@ from .const import (
     LEGACY_MIN_MARGIN,
     LEGACY_PHASE_HEADROOM,
     MAX_BATTERY_POWER_W,
+    ONE_WAY_EFFICIENCY,
     PHASE_POWER_ENTITIES,
     PID_FILTER_ALPHA,
     PID_INTEGRAL_LIMIT_WS,
@@ -128,6 +129,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self.price_forecast: list[tuple[datetime, float]] = []
         self.price_forecast_taxes: dict[datetime, float] = {}
         self.experimental_quarter_plan: dict = {}
+        self._quarter_commitment: dict | None = None
+        self._quarter_commitment_earnings: float | None = None
         self._quarter_task: asyncio.Task | None = None
         self._quarter_last_start: float | None = None
         self._quarter_status = "unavailable"
@@ -436,23 +439,81 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         export_reserve = _export_reserve_soc(
             minimum_soc, bool(self.settings[SET_EXPORT_INCLUDES_TAX])
         )
+        active = None
+        if forecast[0][0] <= now:
+            previous = getattr(self, "experimental_quarter_plan", {})
+            previous_earnings = previous.get("minimum_earnings_eur_kwh")
+            candidates = [(slot, previous_earnings) for slot in previous.get("slots", [])]
+            commitment = getattr(self, "_quarter_commitment", None)
+            if commitment is not None:
+                candidates.append((commitment, getattr(self, "_quarter_commitment_earnings", None)))
+            for slot, commitment_earnings in candidates:
+                try:
+                    start = datetime.fromisoformat(slot["forecast_start"])
+                    if start.timestamp() == forecast[0][0].timestamp():
+                        active = slot.copy()
+                        self._quarter_commitment = active.copy()
+                        self._quarter_commitment_earnings = commitment_earnings
+                        break
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+            if active is not None:
+                if (
+                    active.get("price_eur_kwh") != forecast[0][1]
+                    or active.get("export_tax_eur_kwh") != forecast_taxes[0]
+                    or commitment_earnings != min_earnings
+                ):
+                    return
+        initial_soc = soc
+        planning_forecast = forecast
+        planning_taxes = forecast_taxes
+        planning_solar = solar_input
+        if active is not None:
+            power = float(active["power_w"])
+            duration = forecast[0][2]
+            if power > 0:
+                power = min(power, limits[1])
+                if active.get("discharge_mode") == "nom":
+                    solar_power = (solar_values[0] or 0.0) * 1000 / duration
+                    power = min(power, max(0.0, (house_load or 0.0) - solar_power))
+                reserve = (
+                    export_reserve if active.get("discharge_mode") == "export" else minimum_soc
+                )
+                if soc > reserve:
+                    initial_soc = max(
+                        reserve,
+                        soc - power * duration / 1000 / ONE_WAY_EFFICIENCY
+                        / BATTERY_CAPACITY_KWH * 100,
+                    )
+            elif power < 0:
+                power = min(-power, limits[0])
+                if active.get("charge_source") == "solar":
+                    solar_power = (solar_values[0] or 0.0) * 1000 / duration
+                    power = min(power, max(0.0, solar_power - (house_load or 0.0)))
+                initial_soc = min(
+                    100.0,
+                    soc + power * duration / 1000 * ONE_WAY_EFFICIENCY
+                    / BATTERY_CAPACITY_KWH * 100,
+                )
+            planning_forecast = forecast[1:]
+            planning_taxes = forecast_taxes[1:]
+            planning_solar = solar_input[1:] if solar_input is not None else None
         try:
             result = await self.hass.async_add_executor_job(
                 lambda: plan_quarters(
-                    [price for _, price, _ in forecast],
+                    [price for _, price, _ in planning_forecast],
                     capacity_kwh=BATTERY_CAPACITY_KWH,
-                    initial_soc_pct=soc,
+                    initial_soc_pct=initial_soc,
                     min_soc_pct=minimum_soc,
                     max_power_w=min(limits),
-                    efficiency=math.sqrt(ROUND_TRIP_EFFICIENCY),
+                    efficiency=ONE_WAY_EFFICIENCY,
                     min_profit_eur_per_kwh=min_earnings,
                     export_tax_eur_per_kwh=tax,
                     house_load_w=house_load or 0.0,
                     initial_value_eur_per_kwh=stored_value,
-                    export_taxes_eur_per_kwh=forecast_taxes,
-                    solar_kwh=solar_input,
-                    durations_hours=[duration for _, _, duration in forecast],
-                    use_power_efficiency=True,
+                    export_taxes_eur_per_kwh=planning_taxes,
+                    solar_kwh=planning_solar,
+                    durations_hours=[duration for _, _, duration in planning_forecast],
                     export_reserve_soc_pct=export_reserve,
                 )
             )
@@ -467,11 +528,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "estimated_profit_eur": round(result.profit_eur, 4),
             "house_load_w": house_load,
             "export_tax_eur_kwh": tax,
-            "efficiency_model": "power-dependent estimate; discharge uses grid-charge curve",
+            "efficiency_model": "fixed 97% per charge and discharge",
             "solar_included": solar_complete,
             "limitations": (
                 "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
-                "unless forecast is complete; missing forecast tax uses fallback"
+                "unless forecast is complete; missing forecast tax uses fallback; "
+                "estimated profit excludes any retained current slot"
             ),
             "slots": [
                 {
@@ -485,8 +547,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     "soc_pct": round(predicted_soc, 2),
                 }
                 for (start, price, duration), slot_tax, power, charge_source, predicted_soc in zip(
-                    forecast,
-                    forecast_taxes,
+                    planning_forecast,
+                    planning_taxes,
                     result.power_w,
                     result.charge_source,
                     result.soc_pct,
@@ -494,19 +556,30 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 )
             ],
         }
+        if active is not None:
+            active.update(
+                start=now.isoformat(),
+                duration_hours=forecast[0][2],
+                soc_pct=round(initial_soc, 2),
+            )
+            self.experimental_quarter_plan["slots"].insert(0, active)
         for slot, solar in zip(self.experimental_quarter_plan["slots"], solar_values, strict=True):
             slot["solar_forecast_kwh"] = solar
             demand = max(
                 0.0,
                 (house_load or 0.0) - (solar or 0.0) * 1000 / slot["duration_hours"],
             )
-            slot["discharge_mode"] = (
-                "nom"
-                if 0 < slot["power_w"] <= demand
-                else "export"
-                if slot["power_w"] > 0
-                else "none"
-            )
+            if slot is not active:
+                slot["discharge_mode"] = (
+                    "nom"
+                    if 0 < slot["power_w"] <= demand
+                    else "export"
+                    if slot["power_w"] > 0
+                    else "none"
+                )
+                if forecast[0][0] <= now:
+                    self._quarter_commitment = self.experimental_quarter_plan["slots"][0].copy()
+                    self._quarter_commitment_earnings = min_earnings
         data["experimental_quarter_plan"] = "experimental"
 
     def _experimental_solar_quarters(self, now: datetime) -> dict[datetime, float]:

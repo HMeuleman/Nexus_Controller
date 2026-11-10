@@ -399,13 +399,13 @@ def test_power_dependent_efficiency_drives_planned_soc():
     assert result.profit_eur == pytest.approx(actual_profit)
 
 
-def test_efficiency_curve_rejects_spread_that_fixed_efficiency_overstates():
+def test_legacy_efficiency_mode_uses_the_same_fixed_average():
     arguments = {
         "capacity_kwh": 2.5,
         "initial_soc_pct": 0.0,
         "min_soc_pct": 0.0,
         "max_power_w": 500.0,
-        "efficiency": 0.96,
+        "efficiency": 0.97,
         "min_profit_eur_per_kwh": 0.15,
         "export_tax_eur_per_kwh": 0.0,
     }
@@ -413,7 +413,8 @@ def test_efficiency_curve_rejects_spread_that_fixed_efficiency_overstates():
     curve = plan_quarters([0.25, 0.45], use_power_efficiency=True, **arguments)
 
     assert fixed.profit_eur > 0
-    assert curve.profit_eur == 0
+    assert curve.profit_eur == pytest.approx(fixed.profit_eur)
+    assert curve.power_w == pytest.approx(fixed.power_w)
 
 
 def test_power_curve_values_solar_energy_at_its_own_efficiency():
@@ -605,6 +606,23 @@ def test_short_peak_can_discharge_part_of_existing_inventory():
     assert result.power_w == pytest.approx((0, 10_000, 0))
     assert result.soc_pct[-1] == pytest.approx(87.5)
     assert result.profit_eur == pytest.approx(1.25)
+
+
+def test_initial_partial_quarter_can_discharge_existing_inventory():
+    result = plan_quarters(
+        [0.80, -0.50],
+        capacity_kwh=20.8,
+        initial_soc_pct=85.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=0.97,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+        initial_value_eur_per_kwh=0.10,
+        durations_hours=[14 / 60, 0.25],
+    )
+
+    assert result.power_w == pytest.approx((10_000.0, 0.0))
 
 
 def test_partial_initial_discharge_respects_profit_and_reserve():
@@ -900,6 +918,148 @@ def test_diagnostic_plan_is_read_only_and_exposes_quarters():
         NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
     )
     assert coordinator.experimental_quarter_plan["slots"][1]["discharge_mode"] == "nom"
+
+
+@pytest.mark.parametrize(
+    ("power", "source", "mode", "projected_soc"),
+    [
+        (6000.0, "none", "export", 85.0 - 6000 * 10 / 60 / 1000 / 0.97 / 20.8 * 100),
+        (-6000.0, "grid", "none", 85.0 + 6000 * 10 / 60 / 1000 * 0.97 / 20.8 * 100),
+        (0.0, "none", "none", 85.0),
+    ],
+)
+def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mode, projected_soc):
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.80), (start + timedelta(minutes=15), -0.50)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan={
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [{
+                "start": start.isoformat(),
+                "forecast_start": start.isoformat(),
+                "duration_hours": 0.25,
+                "price_eur_kwh": 0.80,
+                "export_tax_eur_kwh": 0.0,
+                "power_w": power,
+                "charge_source": source,
+                "discharge_mode": mode,
+            }],
+        },
+    )
+    data = {CONF_BATTERY_SOC: 85.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+
+    active, future = coordinator.experimental_quarter_plan["slots"]
+    assert active["power_w"] == power
+    assert active["charge_source"] == source
+    assert active["discharge_mode"] == mode
+    assert active["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
+    assert future["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
+
+    coordinator.settings[SET_MIN_EARNINGS] = 0.20
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "unavailable"
+    coordinator.experimental_quarter_plan = {}
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "unavailable"
+
+    coordinator.settings[SET_MIN_EARNINGS] = 0.15
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert coordinator.experimental_quarter_plan["slots"][0]["power_w"] == power
+
+    coordinator.price_forecast[0] = (start, 0.90)
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "unavailable"
+    coordinator.experimental_quarter_plan = {}
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "unavailable"
+
+    coordinator.price_forecast[0] = (start, 0.80)
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    next_power = coordinator.experimental_quarter_plan["slots"][1]["power_w"]
+    coordinator.price_forecast.append((start + timedelta(minutes=30), 0.90))
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(
+            coordinator, data, start + timedelta(minutes=15), (10000, 10000)
+        )
+    )
+    assert coordinator.experimental_quarter_plan["slots"][0]["power_w"] == next_power
+
+
+@pytest.mark.parametrize(
+    ("soc", "limit", "projected_soc"),
+    [(85.0, 2000, 85.0 - 2000 * 10 / 60 / 1000 / 0.97 / 20.8 * 100), (31.0, 10000, 30.0)],
+)
+def test_retained_export_projection_respects_power_cap_and_reserve(soc, limit, projected_soc):
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.80), (start + timedelta(minutes=15), -0.50)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: False,
+            SET_TAX: 0.11,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan={
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [{
+                "forecast_start": start.isoformat(),
+                "price_eur_kwh": 0.80,
+                "export_tax_eur_kwh": 0.11,
+                "power_w": 6000.0,
+                "charge_source": "none",
+                "discharge_mode": "export",
+            }],
+        },
+    )
+    data = {CONF_BATTERY_SOC: soc, "tax_used": 0.11}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (limit, limit))
+    )
+
+    active, future = coordinator.experimental_quarter_plan["slots"]
+    assert active["power_w"] == 6000.0
+    assert active["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
+    assert future["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
 
 
 def test_planner_measurement_age_uses_reports_not_only_state_changes():

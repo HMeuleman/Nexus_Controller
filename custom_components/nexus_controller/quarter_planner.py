@@ -258,6 +258,11 @@ def plan_quarters(
             min(available, inventory_step * index)
             for index in range(1, math.ceil(available / inventory_step) + 1)
         )
+        if durations_hours is not None and durations_hours[0] < 0.25:
+            partial_level = min(
+                available, max_power_w * durations_hours[0] / 1000 / max_discharge_efficiency
+            )
+            levels = sorted(set([*levels, partial_level]))
     initial_headroom = capacity_kwh * (100 - initial_soc_pct) / 100
     headrooms = [initial_headroom + level for level in levels]
     estimated_work = (

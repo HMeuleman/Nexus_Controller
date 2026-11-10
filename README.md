@@ -88,7 +88,7 @@ When the experimental planner override is off, each time the grid meter reports,
 4. **Charge at a low price.** At or below the maximum charging price it charges at the permitted maximum.
 5. **Charge from the grid for later.** The cheapest slots in the known forecast are paired with the dearest later slots. A pair is used when the dear price times the round-trip efficiency, minus the cheap price, still earns the desired amount. The planner chooses how many slots and at what power the total profit is highest. Expected solar surplus (from the solar forecast, the average daytime house load and the daylight left) is subtracted from what is bought, and the dear side is valued as the better of use in the house or export.
 
-Charging efficiency follows an estimated curve (grid charging 85 % at 250 W, 87.5 % at 500 W, 90 % at 1 kW, 93.5 % at 2 kW, 97.5 % at 5 to 7.5 kW, 95.75 % at 10 kW; slightly higher for PV charging). Discharge efficiency is assumed to follow the grid-charging curve; it has not been measured here.
+Charging and discharging both use a fixed assumed efficiency of 97 % (94.09 % round trip), independent of power or whether charging is from grid or PV. This is an estimate, not a measured value.
 
 ### Experimental quarter-hour planner
 
@@ -98,7 +98,7 @@ To test it, configure the same quarter-hour tariff sensor as both the current el
 
 When the plan or required readings are stale, a price, tax or earnings setting differs from the plan, or the current price does not match the quarter forecast, planner control stops rather than falling back to the existing strategy. `Control: status` reports `planner_price_mismatch` when the selected current price differs. The planner watchdog can stop control even without a new P1 report. Disabling battery control or an actuator error also clears the planner selection.
 
-This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and the assumed efficiency curve. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once every five minutes; a computation that exceeds its work limit is unavailable. Actual SOC and phase caps are checked again before each command.
+This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and fixed efficiency. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once every five minutes; a computation that exceeds its work limit is unavailable. After the first plan, recalculation retains the active quarter's planned action and projects its remaining effect on SOC before optimizing later quarters. A changed current price, tax, or earnings setting makes the plan unavailable until its assumptions match again or the quarter ends. The displayed profit excludes a retained current quarter. Actual SOC, phase caps and other safety checks still apply before each command.
 
 ### The PID loop
 
