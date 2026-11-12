@@ -548,9 +548,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if (
             not forecast
             or not isinstance(soc, (int, float))
-            or limits[0] is None
-            or limits[1] is None
-            or min(limits) <= 0
         ):
             return
         house_load = self.tracker.state.avg_daytime_load_w
@@ -607,6 +604,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             power = float(active["power_w"])
             duration = forecast[0][2]
             if power > 0:
+                if limits[1] is None or not math.isfinite(limits[1]) or limits[1] < 0:
+                    return
                 power = min(power, limits[1])
                 if active.get("discharge_mode") == "nom":
                     solar_power = (solar_values[0] or 0.0) * 1000 / duration
@@ -621,6 +620,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                         / BATTERY_CAPACITY_KWH * 100,
                     )
             elif power < 0:
+                if limits[0] is None or not math.isfinite(limits[0]) or limits[0] < 0:
+                    return
                 power = min(-power, limits[0])
                 if active.get("charge_source") == "solar":
                     solar_power = (solar_values[0] or 0.0) * 1000 / duration
@@ -640,7 +641,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     capacity_kwh=BATTERY_CAPACITY_KWH,
                     initial_soc_pct=initial_soc,
                     min_soc_pct=minimum_soc,
-                    max_power_w=min(limits),
+                    max_power_w=MAX_BATTERY_POWER_W,
                     efficiency=ONE_WAY_EFFICIENCY,
                     min_profit_eur_per_kwh=min_earnings,
                     export_tax_eur_per_kwh=tax,
@@ -664,11 +665,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "house_load_w": house_load,
             "export_tax_eur_kwh": tax,
             "efficiency_model": "fixed 97% per charge and discharge",
+            "planning_power_limit_w": MAX_BATTERY_POWER_W,
             "solar_included": solar_complete,
             "limitations": (
                 "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
                 "unless forecast is complete; missing forecast tax uses fallback; "
-                "estimated profit excludes any retained current slot"
+                "estimated profit excludes any retained current slot; "
+                "future phase limits may reduce actual power"
             ),
             "slots": [
                 {

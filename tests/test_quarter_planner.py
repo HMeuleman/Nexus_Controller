@@ -1048,6 +1048,194 @@ def test_diagnostic_plan_is_read_only_and_exposes_quarters():
     assert coordinator.experimental_quarter_plan["slots"][1]["discharge_mode"] == "nom"
 
 
+@pytest.mark.parametrize("limits", [(2220.0, 10000.0), (0.0, 10000.0), (None, None)])
+def test_future_plan_uses_battery_limit_not_live_phase_limits(limits):
+    now = datetime(2026, 11, 12, 12, 5, tzinfo=UTC)
+    start = now.replace(minute=15)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.20), (start + timedelta(minutes=15), 0.80)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+    )
+    data = {CONF_BATTERY_SOC: 10.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, limits)
+    )
+
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator.experimental_quarter_plan["planning_power_limit_w"] == 10000
+    charge, discharge = coordinator.experimental_quarter_plan["slots"]
+    assert charge["power_w"] == pytest.approx(-10000.0)
+    assert discharge["power_w"] == pytest.approx(9409.0)
+    actual = current_plan_dispatch(
+        charge,
+        now=start,
+        soc_pct=10.0,
+        min_soc_pct=10.0,
+        export_reserve_soc_pct=10.0,
+        max_charge_w=limits[0],
+        max_discharge_w=limits[1],
+        grid_import_w=0.0,
+        battery_power_w=0.0,
+        measurement_ages_s=(1, 1, 1, 1, 1),
+        max_measurement_age_s=30.0,
+    )
+    if limits[0] is not None and limits[0] > 0:
+        assert actual.mode == "charge"
+        assert actual.power_w == limits[0]
+    else:
+        assert actual.mode == "idle"
+    actual_discharge = current_plan_dispatch(
+        discharge,
+        now=start + timedelta(minutes=15),
+        soc_pct=50.0,
+        min_soc_pct=10.0,
+        export_reserve_soc_pct=10.0,
+        max_charge_w=10000.0,
+        max_discharge_w=1234.0,
+        grid_import_w=0.0,
+        battery_power_w=0.0,
+        measurement_ages_s=(1, 1, 1, 1, 1),
+        max_measurement_age_s=30.0,
+    )
+    assert actual_discharge.mode == "discharge"
+    assert actual_discharge.power_w == 1234.0
+
+
+def test_long_forecast_near_quarter_end_ignores_temporary_phase_cap():
+    start = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=14)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[
+            (start + timedelta(minutes=15 * index), 0.20 if index < 40 else 0.80)
+            for index in range(99)
+        ],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+    )
+    data = {CONF_BATTERY_SOC: 12.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (2100, 10000))
+    )
+
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert len(coordinator.experimental_quarter_plan["slots"]) == 99
+    assert coordinator.experimental_quarter_plan["planning_power_limit_w"] == 10000
+
+
+@pytest.mark.parametrize(
+    ("power", "limits", "expected_soc"),
+    [
+        (-6000.0, (2220.0, 10000.0), 50.0 + 2220 * 10 / 60 / 1000 * 0.97 / 20.8 * 100),
+        (6000.0, (10000.0, 2220.0), 50.0 - 2220 * 10 / 60 / 1000 / 0.97 / 20.8 * 100),
+        (-6000.0, (0.0, None), 50.0),
+        (0.0, (None, None), 50.0),
+    ],
+)
+def test_current_commitment_uses_live_limit_but_future_plan_uses_10kw(power, limits, expected_soc):
+    start = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[
+            (start, 0.40),
+            (start + timedelta(minutes=15), 0.20),
+            (start + timedelta(minutes=30), 0.80),
+        ],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.80)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan={
+            "slots": [{
+                "forecast_start": start.isoformat(),
+                "price_eur_kwh": 0.40,
+                "export_tax_eur_kwh": 0.0,
+                "power_w": power,
+                "charge_source": "grid" if power < 0 else "none",
+                "discharge_mode": "export" if power > 0 else "none",
+            }],
+        },
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, limits)
+    )
+
+    assert data["experimental_quarter_plan"] == "experimental"
+    active, charge, discharge = coordinator.experimental_quarter_plan["slots"]
+    assert active["power_w"] == power
+    assert active["soc_pct"] == pytest.approx(expected_soc, abs=0.01)
+    assert charge["power_w"] == pytest.approx(-10000.0)
+    assert discharge["power_w"] == pytest.approx(9409.0)
+
+
+@pytest.mark.parametrize(
+    ("power", "limits"),
+    [(-6000.0, (None, 10000.0)), (6000.0, (10000.0, None))],
+)
+def test_unknown_active_direction_limit_blocks_soc_projection(power, limits):
+    start = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.40), (start + timedelta(minutes=15), 0.80)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan={"slots": [{
+            "forecast_start": start.isoformat(),
+            "price_eur_kwh": 0.40,
+            "export_tax_eur_kwh": 0.0,
+            "power_w": power,
+        }]},
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, limits)
+    )
+
+    assert data["experimental_quarter_plan"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("power", "source", "mode", "projected_soc"),
     [
