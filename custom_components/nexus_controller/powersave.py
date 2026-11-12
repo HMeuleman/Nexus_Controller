@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 
@@ -24,6 +24,7 @@ class PowerSaveMemory:
     last_activity_s: float
     maintenance_s: float
     on_since_s: float | None = None
+    last_unavailable_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ def decide_powersave(
         settings.min_soc_pct,
         settings.min_off_s,
         settings.warmup_s,
+        *(value for value in (memory.last_unavailable_s,) if value is not None),
     )
     if (
         not all(math.isfinite(value) for value in values)
@@ -103,7 +105,15 @@ def decide_powersave(
         or settings.maintenance_interval_s <= 0
         or not 0 < settings.maintenance_duration_s < settings.maintenance_interval_s
         or not 0 <= settings.min_soc_pct <= 100
-        or now_s < max(memory.started_s, memory.last_activity_s, memory.maintenance_s)
+        or now_s
+        < max(
+            memory.started_s,
+            memory.last_activity_s,
+            memory.maintenance_s,
+            memory.last_unavailable_s
+            if memory.last_unavailable_s is not None
+            else memory.started_s,
+        )
     ):
         return PowerSaveDecision("on", "invalid_settings_or_clock", False, memory)
     on_since = memory.on_since_s if inverter_on else None
@@ -115,11 +125,18 @@ def decide_powersave(
     maintenance = memory.maintenance_s
     if on_since is not None and now_s - on_since >= settings.maintenance_duration_s:
         maintenance = now_s
-    memory = PowerSaveMemory(memory.started_s, last_activity, maintenance, on_since)
+    memory = PowerSaveMemory(
+        memory.started_s, last_activity, maintenance, on_since, memory.last_unavailable_s
+    )
     ready = on_since is not None and now_s - on_since >= settings.warmup_s
 
     def on(reason: str) -> PowerSaveDecision:
-        return PowerSaveDecision("on", reason, ready, memory)
+        updated = (
+            replace(memory, last_unavailable_s=now_s)
+            if reason in ("measurements_unavailable", "plan_unavailable", "plan_ending")
+            else memory
+        )
+        return PowerSaveDecision("on", reason, ready, updated)
 
     if not enabled or not planner_enabled:
         return on("powersave_disabled")
@@ -148,7 +165,13 @@ def decide_powersave(
         return on("maintenance_due")
     if next_work_s is not None and next_work_s <= now_s + settings.lead_s:
         return on("planned_work")
-    if now_s - max(memory.started_s, last_activity) < settings.cooldown_s:
+    cooldown_start = max(
+        memory.started_s,
+        last_activity,
+        on_since if on_since is not None else memory.started_s,
+        memory.last_unavailable_s if memory.last_unavailable_s is not None else memory.started_s,
+    )
+    if now_s - cooldown_start < settings.cooldown_s:
         return on("cooldown")
     idle_until = min(
         schedule_end_s,

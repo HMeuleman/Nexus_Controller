@@ -156,7 +156,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._powersave_memory = PowerSaveMemory(started, started, started)
         self._powersave_saved_maintenance = started
         self._powersave_wake_pending = False
-        self.powersave_details: dict[str, float | str | bool | None] = {}
+        self._powersave_owns_off = False
+        self._powersave_measurement_lockout = False
+        self.powersave_details: dict[str, object] = {}
         self._lock = asyncio.Lock()
         self._grid_samples = 0
         self._controlled_samples = 0
@@ -353,6 +355,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 "Select an inverter power switch before enabling powersave"
             )
         self.settings[SET_POWERSAVE_ENABLED] = enabled
+        self._powersave_owns_off = False
+        self._powersave_measurement_lockout = False
         if not enabled:
             self._powersave_wake_pending = True
         await self.async_refresh()
@@ -1160,11 +1164,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         window = None
         ages = self._planner_measurement_ages(now) if enabled else None
         interval = self.sample_estimator.interval_s
+        max_measurement_age = (
+            max(30.0, interval * 3) if math.isfinite(interval) and interval > 0 else None
+        )
         readings_fresh = (
             ages is not None
-            and math.isfinite(interval)
-            and interval > 0
-            and all(0 <= age <= max(30.0, interval * 3) for age in ages)
+            and max_measurement_age is not None
+            and all(0 <= age <= max_measurement_age for age in ages)
         )
         plan_earnings = self.experimental_quarter_plan.get("minimum_earnings_eur_kwh")
         if (
@@ -1227,6 +1233,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             ),
             "requested_power": decision.power if enabled or self._powersave_wake_pending else None,
             "measurements_fresh": readings_fresh,
+            "measurement_max_age_s": max_measurement_age,
+            "measurements": self._planner_measurement_diagnostics(now, max_measurement_age),
+            "measurement_lockout": getattr(self, "_powersave_measurement_lockout", False),
         }
         if decision.reason != "invalid_settings_or_clock":
             def at(value: float | None) -> str | None:
@@ -1239,8 +1248,18 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
             self.powersave_details.update(
                 inverter_on_since=at(decision.memory.on_since_s),
+                last_unavailable_at=at(decision.memory.last_unavailable_s),
                 cooldown_until=at(
-                    max(decision.memory.started_s, decision.memory.last_activity_s)
+                    max(
+                        decision.memory.started_s,
+                        decision.memory.last_activity_s,
+                        decision.memory.on_since_s
+                        if decision.memory.on_since_s is not None
+                        else decision.memory.started_s,
+                        decision.memory.last_unavailable_s
+                        if decision.memory.last_unavailable_s is not None
+                        else decision.memory.started_s,
+                    )
                     + settings.cooldown_s
                 ),
                 control_ready_at=at(
@@ -1259,12 +1278,30 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if decision.memory.maintenance_s - self._powersave_saved_maintenance >= 60:
             self._powersave_saved_maintenance = decision.memory.maintenance_s
             self._powersave_store.async_delay_save(self._powersave_data, 60)
+        if (
+            enabled
+            and inverter_on is False
+            and decision.reason == "measurements_unavailable"
+            and getattr(self, "_powersave_owns_off", False)
+        ):
+            self.settings[SET_POWERSAVE_ENABLED] = False
+            self._powersave_wake_pending = True
+            self._powersave_owns_off = False
+            self._powersave_measurement_lockout = True
+            data["powersave_status"] = "measurements_lockout"
+            self.powersave_details.update(
+                enabled=False, measurement_lockout=True, requested_power="on"
+            )
+        elif getattr(self, "_powersave_measurement_lockout", False) and not enabled:
+            data["powersave_status"] = "measurements_lockout"
         if self._powersave_wake_pending and inverter_on:
             self._powersave_wake_pending = False
         if (enabled or self._powersave_wake_pending) and decision.power == "on":
             if inverter_on is not True:
                 if not await self._async_set_inverter_power(True):
                     data["powersave_status"] = "inverter_write_failed"
+            else:
+                self._powersave_owns_off = False
         elif enabled and decision.power == "off" and inverter_on is True:
             force_states = [
                 self.hass.states.get(self.configured_entity_id(key))
@@ -1272,7 +1309,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             ]
             if all(force is not None and force.state == "off" for force in force_states):
                 self._powersave_memory = replace(self._powersave_memory, on_since_s=None)
-                if not await self._async_set_inverter_power(False):
+                if await self._async_set_inverter_power(False):
+                    self._powersave_owns_off = True
+                else:
                     data["powersave_status"] = "inverter_write_failed"
                 return False
             data["powersave_status"] = "waiting_for_forced_modes_to_stop"
@@ -1281,6 +1320,38 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 and now_s - decision.memory.on_since_s >= settings.warmup_s
             )
         return bool(inverter_on and decision.ready_for_control)
+
+    def _planner_measurement_diagnostics(
+        self, now: datetime, max_age_s: float | None
+    ) -> dict[str, dict[str, object]]:
+        """Describe the actual configured reports without relaxing freshness checks."""
+        details = {}
+        for key in (*PHASE_POWER_ENTITIES, CONF_BATTERY_SOC, CONF_BATTERY_POWER):
+            entity_id = self.configured_entity_id(key)
+            state = self.hass.states.get(entity_id) if entity_id else None
+            reported = (
+                getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+                if state is not None
+                else None
+            )
+            age = (
+                now.timestamp() - reported.timestamp()
+                if isinstance(reported, datetime) and reported.tzinfo is not None
+                else None
+            )
+            details[key] = {
+                "entity_id": entity_id,
+                "state": state.state if state is not None else None,
+                "age_s": round(age, 2) if age is not None else None,
+                "fresh": (
+                    state is not None
+                    and state.state not in ("unknown", "unavailable")
+                    and age is not None
+                    and max_age_s is not None
+                    and 0 <= age <= max_age_s
+                ),
+            }
+        return details
 
     def _planner_measurement_ages(self, now: datetime) -> tuple[float, ...] | None:
         """Return ages of the configured phase, SOC and battery power reports."""

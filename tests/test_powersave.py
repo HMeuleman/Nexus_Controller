@@ -12,9 +12,13 @@ from homeassistant.exceptions import ServiceValidationError
 from custom_components.nexus_controller import coordinator as coordinator_module
 from custom_components.nexus_controller.config_flow import _config_schema, _validation_error
 from custom_components.nexus_controller.const import (
+    CONF_BATTERY_POWER,
     CONF_BATTERY_SOC,
     CONF_CHARGE_ENABLE,
     CONF_DISCHARGE_ENABLE,
+    CONF_GRID_POWER_L1,
+    CONF_GRID_POWER_L2,
+    CONF_GRID_POWER_L3,
     CONF_INVERTER_POWER,
     SET_CONTROL_ENABLED,
     SET_MIN_EARNINGS,
@@ -62,6 +66,34 @@ def test_off_only_after_startup_and_activity_cooldown():
     assert active.reason == "battery_active"
     assert decision(now_s=2699, memory=active.memory).reason == "cooldown"
     assert decision(now_s=2700, memory=active.memory).power == "off"
+
+
+@pytest.mark.parametrize("cause", ["measurements", "plan"])
+def test_safety_wake_keeps_inverter_on_for_cooldown_after_inputs_recover(cause):
+    unavailable = {"readings_fresh": False} if cause == "measurements" else {"plan_valid": False}
+    off_memory = PowerSaveMemory(0.0, 0.0, 0.0, None)
+    wake = decision(now_s=2000, inverter_on=False, memory=off_memory, **unavailable)
+    assert wake.power == "on"
+
+    on = decision(now_s=2001, inverter_on=True, memory=wake.memory)
+    assert on.power == "on"
+    assert on.reason == "cooldown"
+    assert decision(now_s=2900, inverter_on=True, memory=on.memory).power == "on"
+    assert decision(now_s=2901, inverter_on=True, memory=on.memory).power == "off"
+
+
+@pytest.mark.parametrize("cause", ["measurements", "plan"])
+def test_repeated_unavailable_inputs_restart_shutdown_cooldown(cause):
+    unavailable = {"readings_fresh": False} if cause == "measurements" else {"plan_valid": False}
+    initial = PowerSaveMemory(0.0, 0.0, 0.0, 0.0)
+    first = decision(now_s=2000, memory=initial, **unavailable)
+    assert first.power == "on"
+    recovered = decision(now_s=2001, memory=first.memory)
+    assert recovered.reason == "cooldown"
+    second = decision(now_s=2500, memory=recovered.memory, **unavailable)
+    assert second.power == "on"
+    assert decision(now_s=3399, memory=second.memory).reason == "cooldown"
+    assert decision(now_s=3400, memory=second.memory).power == "off"
 
 
 @pytest.mark.parametrize("power", [-2000, -0.01, 0.01, 2000])
@@ -211,11 +243,17 @@ def integration_coordinator(monkeypatch, inverter="on"):
     coordinator._async_set_inverter_power = lambda on: NexusCoordinator._async_set_inverter_power(
         coordinator, on
     )
+    coordinator._planner_measurement_diagnostics = lambda moment, max_age: (
+        NexusCoordinator._planner_measurement_diagnostics(coordinator, moment, max_age)
+    )
 
     async def step(power=0.0, soc=50.0):
-        return await NexusCoordinator._async_powersave_step(
-            coordinator, {CONF_BATTERY_SOC: soc}, now, (0.0, 0.0, 0.0), power, (10000, 10000)
+        data = {CONF_BATTERY_SOC: soc}
+        result = await NexusCoordinator._async_powersave_step(
+            coordinator, data, now, (0.0, 0.0, 0.0), power, (10000, 10000)
         )
+        coordinator.last_step_data = data
+        return result
 
     return coordinator, states, clock, step
 
@@ -253,7 +291,7 @@ def test_powersave_status_exposes_current_state_and_timing(monkeypatch):
     assert details["inverter_power"] == "on"
     assert details["requested_power"] == "on"
     assert details["inverter_on_since"] == (now - timedelta(seconds=50)).isoformat()
-    assert details["cooldown_until"] == (now + timedelta(seconds=800)).isoformat()
+    assert details["cooldown_until"] == (now + timedelta(seconds=850)).isoformat()
     assert details["control_ready_at"] == (now + timedelta(seconds=10)).isoformat()
     assert details["next_planned_work_at"] == (now + timedelta(minutes=30)).isoformat()
     assert details["planned_wake_at"] == (now + timedelta(minutes=24, seconds=50)).isoformat()
@@ -292,6 +330,146 @@ def test_integration_wakes_on_low_soc_and_waits_for_confirmed_power_and_warmup(m
     assert asyncio.run(step(soc=7)) is False
     clock[0] += 1
     assert asyncio.run(step(soc=7)) is True
+
+
+def test_integration_does_not_power_cycle_when_measurements_recover(monkeypatch):
+    coordinator, states, clock, step = integration_coordinator(monkeypatch, inverter="off")
+    coordinator._planner_measurement_ages = lambda moment: None
+
+    assert asyncio.run(step()) is False
+    coordinator.hass.services.async_call.assert_awaited_once_with(
+        "switch", "turn_on", {"entity_id": "switch.inverter"}, blocking=True
+    )
+    states["switch.inverter"].state = "on"
+    clock[0] += 1
+    coordinator._planner_measurement_ages = lambda moment: (1, 1, 1, 1, 1)
+    assert asyncio.run(step()) is False
+    clock[0] += 60
+    assert asyncio.run(step()) is True
+    assert coordinator.hass.services.async_call.await_count == 1
+    clock[0] += 840
+    assert asyncio.run(step()) is False
+    assert coordinator.hass.services.async_call.await_args.args[:3] == (
+        "switch", "turn_off", {"entity_id": "switch.inverter"}
+    )
+
+
+def test_missing_measurements_after_controller_shutdown_disable_powersave(monkeypatch):
+    coordinator, states, clock, step = integration_coordinator(monkeypatch)
+    assert asyncio.run(step()) is False
+    assert coordinator.hass.services.async_call.await_args.args[:2] == ("switch", "turn_off")
+
+    states["switch.inverter"].state = "off"
+    clock[0] += 40
+    coordinator._planner_measurement_ages = lambda moment: None
+    assert asyncio.run(step()) is False
+    assert coordinator.hass.services.async_call.await_args.args[:2] == ("switch", "turn_on")
+    assert coordinator.settings[SET_POWERSAVE_ENABLED] is False
+    assert coordinator._powersave_wake_pending is True
+    assert coordinator.last_step_data["powersave_status"] == "measurements_lockout"
+    assert coordinator.powersave_details["measurement_lockout"] is True
+
+    states["switch.inverter"].state = "on"
+    clock[0] += 1
+    coordinator._planner_measurement_ages = lambda moment: (1, 1, 1, 1, 1)
+    asyncio.run(step())
+    clock[0] += 900
+    asyncio.run(step())
+    assert coordinator.hass.services.async_call.await_count == 2
+    assert coordinator.last_step_data["powersave_status"] == "measurements_lockout"
+
+    coordinator.async_refresh = AsyncMock(side_effect=step)
+    asyncio.run(NexusCoordinator.async_set_powersave(coordinator, True))
+    assert coordinator.settings[SET_POWERSAVE_ENABLED] is True
+    assert coordinator._powersave_measurement_lockout is False
+
+
+def test_missing_measurements_while_manually_off_do_not_disable_powersave(monkeypatch):
+    coordinator, _, _, step = integration_coordinator(monkeypatch, inverter="off")
+    coordinator._planner_measurement_ages = lambda moment: None
+
+    assert asyncio.run(step()) is False
+    assert coordinator.settings[SET_POWERSAVE_ENABLED] is True
+    assert coordinator.hass.services.async_call.await_args.args[:2] == ("switch", "turn_on")
+
+
+def test_failed_shutdown_does_not_claim_ownership_or_trigger_lockout(monkeypatch):
+    coordinator, states, _, step = integration_coordinator(monkeypatch)
+    coordinator.hass.services.async_call.side_effect = RuntimeError("write failed")
+
+    assert asyncio.run(step()) is False
+    assert coordinator.last_step_data["powersave_status"] == "inverter_write_failed"
+    assert not getattr(coordinator, "_powersave_owns_off", False)
+    states["switch.inverter"].state = "off"
+    coordinator._planner_measurement_ages = lambda moment: None
+    assert asyncio.run(step()) is False
+    assert coordinator.settings[SET_POWERSAVE_ENABLED] is True
+
+
+def test_measurement_diagnostics_identify_stale_and_unavailable_inputs():
+    now = datetime(2026, 11, 12, 21, 0, tzinfo=UTC)
+    keys = (
+        CONF_GRID_POWER_L1,
+        CONF_GRID_POWER_L2,
+        CONF_GRID_POWER_L3,
+        CONF_BATTERY_SOC,
+        CONF_BATTERY_POWER,
+    )
+    states = {
+        key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
+    }
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=40)
+    states[CONF_BATTERY_POWER].state = "unavailable"
+    coordinator = SimpleNamespace(
+        configured_entity_id=lambda key: key,
+        hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
+    )
+
+    details = NexusCoordinator._planner_measurement_diagnostics(coordinator, now, 30.0)
+
+    assert details[CONF_GRID_POWER_L1]["fresh"] is True
+    assert details[CONF_BATTERY_SOC]["age_s"] == 40
+    assert details[CONF_BATTERY_SOC]["fresh"] is False
+    assert details[CONF_BATTERY_POWER]["state"] == "unavailable"
+    assert details[CONF_BATTERY_POWER]["fresh"] is False
+
+
+def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
+    coordinator, states, _, step = integration_coordinator(monkeypatch)
+    now = datetime(2026, 11, 12, 12, tzinfo=UTC)
+    keys = (
+        CONF_GRID_POWER_L1,
+        CONF_GRID_POWER_L2,
+        CONF_GRID_POWER_L3,
+        CONF_BATTERY_SOC,
+        CONF_BATTERY_POWER,
+    )
+    original_configured = coordinator.configured_entity_id
+    coordinator.configured_entity_id = lambda key: key if key in keys else original_configured(key)
+    states.update(
+        {
+            key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2))
+            for key in keys
+        }
+    )
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=40)
+    coordinator._planner_measurement_ages = lambda moment: (
+        NexusCoordinator._planner_measurement_ages(coordinator, moment)
+    )
+
+    assert asyncio.run(step()) is True
+    details = coordinator.powersave_details
+    assert details["measurement_max_age_s"] == 30
+    assert details["measurements_fresh"] is False
+    assert details["last_unavailable_at"] == now.isoformat()
+    assert details["cooldown_until"] == (now + timedelta(minutes=15)).isoformat()
+    assert details["measurements"][CONF_BATTERY_SOC] == {
+        "entity_id": CONF_BATTERY_SOC,
+        "state": "1",
+        "age_s": 40,
+        "fresh": False,
+    }
+    coordinator.hass.services.async_call.assert_not_awaited()
 
 
 @pytest.mark.parametrize("condition", ["planner", "control", "measurement", "plan", "manual"])

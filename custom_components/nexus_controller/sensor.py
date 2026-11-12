@@ -60,11 +60,14 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
         {
             "slots",
             "inverter_on_since",
+            "last_unavailable_at",
             "cooldown_until",
             "control_ready_at",
             "next_planned_work_at",
             "planned_wake_at",
             "maintenance_start_at",
+            "measurement_max_age_s",
+            "measurements",
         }
     )
 

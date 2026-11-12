@@ -12,6 +12,7 @@ A Home Assistant integration that runs a Zonneplan Nexus home battery (modified 
 - Charges from the grid in cheap slots and sells to the grid in the dearest slots when the price spread covers conversion losses and your desired earnings.
 - Tracks what the battery has earned, the value of the energy stored in it, and the number of cycles.
 - Works with the Solis Modbus force charge/discharge switches and power numbers (`rc_force_battery_charge`, `rc_force_battery_discharge` and their power entities).
+- Optionally powers down the inverter during suitable idle periods, with scheduled wake-up and battery-protection checks.
 
 ## Installation
 
@@ -33,7 +34,7 @@ The setup dialog maps existing entities (each only once):
 | Battery state of charge | % |
 | Electricity price | EUR/kWh including tax |
 | Price forecast (optional) | Defaults to the `forecast` attribute of the price sensor. The Zonneplan quarter-hour tariff sensor is recommended: it also carries `price_tax_excluded`, so the exact tax per slot is known |
-| Net battery power | W, positive is discharging, negative is charging. Required for control, shadow proposals and the earnings tracker |
+| Net battery power | W or kW, positive is discharging, negative is charging. Required for control, shadow proposals, the earnings tracker and powersave |
 | Solar forecast (optional) | Expected remaining solar energy in kWh until sunset (the coming day at night) |
 | Solar ML hourly forecasts (optional) | Select separate sensors for today and tomorrow; used by the planner |
 | Solis charge/discharge switches and power numbers | The four control entities |
@@ -49,7 +50,7 @@ Settings (configuration entities, values survive restarts):
 | Entity | Default | Meaning |
 | --- | --- | --- |
 | Reserved room per phase | 1000 W | Headroom kept free on each phase |
-| Max price for charging from grid | 0.15 | Always charge at or below this price (set to -1 to disable) |
+| Max price for charging from grid | 0.15 | Legacy strategy: charge at or below this price (set to -1 to disable) |
 | Minimum price for covering house load (floor) | 0.00 | Lower bound for the NOM discharge threshold |
 | Minimum desired earnings per kWh | 0.20 | Wear included |
 | Tax per kWh (fallback) | 0.11 | Used when the forecast does not provide the tax |
@@ -62,7 +63,7 @@ Settings (configuration entities, values survive restarts):
 | Write-down: hours / minimum SOC / percent per day | 24 h, 50 %, 33 % | 0 percent turns it off |
 | Manual override timeout | 30 min | See manual override |
 | Exported energy paid including tax | off | On for 2026 rules, off from 2027 |
-| Inverter powersave cooldown | 15 min | Wait after startup or battery activity |
+| Inverter powersave cooldown | 15 min | Wait after startup, power-on, battery activity or unavailable inputs |
 | Inverter powersave wake lead | 5 min | Wake before planned charging or discharging |
 | Inverter maintenance interval / duration | 24 h / 30 min | Periodic continuous power-on period |
 | Inverter powersave minimum SOC | 8 % | Keep inverter on at or below this SOC |
@@ -111,9 +112,30 @@ Plans are estimates, not guaranteed maximum earnings: the search uses bounded in
 
 Select the actual inverter power switch and configure the net battery power sensor first. Powersave is off by default and must be explicitly enabled; selecting the planner does not enable it. Once enabled, the setting is restored after restart and the integration requests that the inverter be on at startup. Battery control still starts off. Powersave only switches the inverter off while both planner and battery control are enabled, a fresh valid plan covers the idle period, the SOC and battery power readings are fresh, battery power is exactly zero and both forced-mode switches are confirmed off. A manual override keeps it on.
 
-The inverter stays on for the configured cooldown after startup or any nonzero battery power, wakes before planned work, and never deliberately starts an off period shorter than 15 minutes. It is kept on at or below the powersave minimum SOC, and runs for the configured maintenance duration at least once per maintenance interval. It waits at least one minute after confirmed power-on before issuing charge or discharge commands. Missing or stale readings, an unavailable or changed plan, disabled control or planner, and invalid settings request power on. The **Inverter powersave status** sensor reports the decision or a failed write.
+The inverter stays on for the configured cooldown after startup, a confirmed power-on or any nonzero battery power. Missing or stale readings and unavailable plans restart the cooldown, so inputs must remain healthy for that period before another shutdown. The inverter wakes before planned work and never deliberately starts an off period shorter than 15 minutes; a safety condition or changed schedule can require an earlier wake-up. The inverter is kept on at or below the powersave minimum SOC, and the integration requests a continuous power-on period for the configured maintenance duration once per maintenance interval. It waits at least one minute after confirmed power-on before issuing charge or discharge commands. Missing or stale readings, an unavailable or changed plan, disabled control or planner, and invalid settings request power on. The **Inverter powersave status** sensor reports the decision or a failed write.
 
-The status sensor's attributes show the observed inverter state, requested state, measurement freshness, observed power-on time, cooldown and control-ready times, next planned work, planned wake time and maintenance start. Times are estimates and may change with the plan, measurements or settings; an unavailable schedule has no planned-work or wake time.
+If required measurements become unavailable while the inverter is off following an automatic powersave shutdown, the integration requests power on and disables powersave to avoid repeated power cycles. The status reports `measurements_lockout`; investigate the readings before explicitly enabling powersave again. A failed wake request remains a safety issue and is reported as `inverter_write_failed`.
+
+In **Developer Tools > States**, select **Inverter powersave status** to inspect its state and attributes:
+
+| Attribute | Meaning |
+| --- | --- |
+| `configured` / `enabled` | Whether an inverter switch is selected and powersave is enabled |
+| `inverter_power` / `requested_power` | Observed switch state and the requested state; a request is not confirmation of a successful write |
+| `measurements_fresh` | Whether the required readings are recent enough for powersave decisions |
+| `measurement_max_age_s` | Maximum report age currently accepted for those readings |
+| `measurements` | Each configured phase, SOC and battery power entity's state, report age and freshness |
+| `measurement_lockout` | Whether powersave was disabled because measurements were lost after an automatic shutdown |
+| `inverter_on_since` | When the inverter was observed to turn on |
+| `last_unavailable_at` | Most recent observation of unavailable measurements, an unavailable plan or insufficient plan coverage |
+| `cooldown_until` | Earliest end of the startup or last-activity cooldown |
+| `control_ready_at` | End of the one-minute power-on wait before charge/discharge control |
+| `next_planned_work_at` / `planned_wake_at` | Next planned charge/discharge and its calculated early wake time |
+| `maintenance_start_at` | Calculated start of the next maintenance power-on period |
+
+Times are UTC estimates and may change with the plan, measurements or settings. An unavailable schedule has no planned-work or wake time. Ending the cooldown does not guarantee shutdown: all safety checks and the minimum idle window must still be satisfied. Timing attributes are not stored in Recorder history.
+
+For example, `cooldown` means the waiting period is still active, `battery_active` means battery power is nonzero, and `low_soc` keeps the inverter on. `plan_unavailable` or `measurements_unavailable` indicates that a safe shutdown cannot be planned; `inverter_write_failed` means a switch command failed.
 
 The powersave implementation is tested offline only. A running Home Assistant, working Modbus connection and correct sensor reports are required; the integration cannot guarantee a wake-up or the maintenance interval during an outage or failed write. Verify the switch and readings and monitor the inverter closely before relying on powersave.
 
@@ -157,6 +179,8 @@ The `sim/` directory has offline tools used to choose the defaults from real Hom
 The diagnostic **Quarter-hour plan** exposes a `slots` attribute with timestamps, prices, estimated power (positive is discharge), charge source and end-of-slot SOC. It is separate from the existing shadow proposal; it controls the battery only when the planner and battery control switches are both on. It requires a contiguous 15-minute price forecast and uses only the remaining duration of the current slot when that slot is available.
 
 In Home Assistant, open the diagnostic sensor's attributes to inspect its plan and estimated profit. A custom forecast-capable dashboard card, such as ApexCharts Card, can plot the `slots` attribute as price, planned power and SOC series. The ordinary history graph cannot show these future values directly.
+
+An [example ApexCharts card](dashboard_planner.txt) is included. Replace its example entity ID with the actual quarter-hour plan sensor ID from your Home Assistant installation.
 
 Optional hourly forecast inputs can be selected explicitly for today's Solar Forecast ML hybrid forecast and tomorrow's Solar Forecast ML forecast. The diagnostic displays each hourly kWh value divided evenly across its four quarters as `solar_forecast_kwh`. When the solar forecast covers every planned quarter, the grid-cycle estimate takes solar surplus and forgone export revenue into account. Otherwise it leaves solar out and reports `solar_included: false`; missing hours are not treated as zero.
 
