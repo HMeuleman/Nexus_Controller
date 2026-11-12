@@ -74,13 +74,19 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
         )
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | str | None:
         """Return the selected input value."""
-        return self.coordinator.data.get(self.entity_description.config_key)
+        value = self.coordinator.data.get(self.entity_description.config_key)
+        if (
+            self.entity_description.config_key == "experimental_quarter_plan"
+            and value == "experimental"
+        ):
+            return "ready"
+        return value
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        """Expose the experimental plan only on its diagnostic entity."""
+        """Expose the plan only on its diagnostic entity."""
         if self.entity_description.config_key == "experimental_quarter_plan":
             return self.coordinator.experimental_quarter_plan
         return None

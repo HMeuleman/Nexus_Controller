@@ -32,6 +32,11 @@ from .const import (
     SET_PID_KP,
     SET_PID_START_ERROR,
     SET_PID_STOP_ERROR,
+    SET_POWERSAVE_COOLDOWN,
+    SET_POWERSAVE_DURATION,
+    SET_POWERSAVE_INTERVAL,
+    SET_POWERSAVE_LEAD,
+    SET_POWERSAVE_MIN_SOC,
     SET_RESERVED_ROOM,
     SET_SOLAR_BLOCK,
     SET_TAX,
@@ -53,6 +58,46 @@ class NexusNumberDescription(NumberEntityDescription):
 
 
 SETTINGS = (
+    NexusNumberDescription(
+        key=SET_POWERSAVE_COOLDOWN,
+        translation_key=SET_POWERSAVE_COOLDOWN,
+        native_min_value=0,
+        native_max_value=1440,
+        native_step=1,
+        native_unit_of_measurement="min",
+    ),
+    NexusNumberDescription(
+        key=SET_POWERSAVE_LEAD,
+        translation_key=SET_POWERSAVE_LEAD,
+        native_min_value=1,
+        native_max_value=1440,
+        native_step=1,
+        native_unit_of_measurement="min",
+    ),
+    NexusNumberDescription(
+        key=SET_POWERSAVE_INTERVAL,
+        translation_key=SET_POWERSAVE_INTERVAL,
+        native_min_value=1,
+        native_max_value=168,
+        native_step=1,
+        native_unit_of_measurement="h",
+    ),
+    NexusNumberDescription(
+        key=SET_POWERSAVE_DURATION,
+        translation_key=SET_POWERSAVE_DURATION,
+        native_min_value=1,
+        native_max_value=1440,
+        native_step=1,
+        native_unit_of_measurement="min",
+    ),
+    NexusNumberDescription(
+        key=SET_POWERSAVE_MIN_SOC,
+        translation_key=SET_POWERSAVE_MIN_SOC,
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="%",
+    ),
     NexusNumberDescription(
         key=SET_SOLAR_BLOCK,
         translation_key=SET_SOLAR_BLOCK,

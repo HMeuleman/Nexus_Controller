@@ -4,7 +4,7 @@
 
 A Home Assistant integration that runs a Zonneplan Nexus home battery (modified Solis S6-EH3P10K-H-ZP inverter) with its own energy management strategy: self-consumption (NOM, "nul op de meter") with a PID loop, plus price-based grid charging and selling on dynamic tariffs.
 
-> **Experimental software that writes to a battery inverter.** Control is **off by default** and always off after a restart. Read the [safety section](#safety-mechanisms) first, start in shadow mode, and keep the Zonneplan dongles connected until you trust it.
+> **This software writes to a battery inverter.** Battery control is **off by default** and always off after a restart. Read the [safety section](#safety-mechanisms) first, start with control off, and keep the Zonneplan dongles connected until you trust it.
 
 ## What it does
 
@@ -35,8 +35,9 @@ The setup dialog maps existing entities (each only once):
 | Price forecast (optional) | Defaults to the `forecast` attribute of the price sensor. The Zonneplan quarter-hour tariff sensor is recommended: it also carries `price_tax_excluded`, so the exact tax per slot is known |
 | Net battery power | W, positive is discharging, negative is charging. Required for control, shadow proposals and the earnings tracker |
 | Solar forecast (optional) | Expected remaining solar energy in kWh until sunset (the coming day at night) |
-| Solar ML hourly forecasts (optional) | Select separate sensors for today and tomorrow; used by the experimental planner |
+| Solar ML hourly forecasts (optional) | Select separate sensors for today and tomorrow; used by the planner |
 | Solis charge/discharge switches and power numbers | The four control entities |
+| Inverter power switch (optional) | Select the actual inverter on/off switch to make powersave available; it is never auto-detected |
 | Fuse limit per phase | Default 25 A |
 
 Everything else is a Home Assistant entity (see below), so you can change it without reloading.
@@ -61,8 +62,12 @@ Settings (configuration entities, values survive restarts):
 | Write-down: hours / minimum SOC / percent per day | 24 h, 50 %, 33 % | 0 percent turns it off |
 | Manual override timeout | 30 min | See manual override |
 | Exported energy paid including tax | off | On for 2026 rules, off from 2027 |
+| Inverter powersave cooldown | 15 min | Wait after startup or battery activity |
+| Inverter powersave wake lead | 5 min | Wake before planned charging or discharging |
+| Inverter maintenance interval / duration | 24 h / 30 min | Periodic continuous power-on period |
+| Inverter powersave minimum SOC | 8 % | Keep inverter on at or below this SOC |
 
-Controls: **Battery control enabled**, **Experimental planner override**, **Manual maximum charge** and **Manual maximum discharge**. Both automatic control and the planner override start off after every restart.
+Controls: **Battery control enabled**, **Planner**, **Inverter powersave**, **Manual maximum charge** and **Manual maximum discharge**. Battery control starts off after every restart; planner selection starts on. Powersave starts off until explicitly enabled and then restores that choice after a restart.
 
 Tracked values you can overwrite: **Battery earned total**, **Battery cycles total**, **Value of stored energy**.
 
@@ -80,7 +85,7 @@ The integration keeps a running cost basis for the energy in the battery. Chargi
 
 ### Decisions
 
-When the experimental planner override is off, each time the grid meter reports, the existing strategy decides, in this order:
+When the planner is off, each time the grid meter reports, the existing strategy decides, in this order:
 
 1. **Sell to the grid.** If the price after export tax beats the stored value plus the desired earnings, and the battery is above its export reserve, it discharges at maximum power, but only in the dearest slots that the available energy can cover. If a dearer slot is coming that the energy can still cover, it waits for it. When export is paid including tax, the export reserve is the configured minimum SOC; otherwise it is the higher of 30 % and the minimum SOC.
 2. **Cover house load (NOM).** If the price reaches the discharge threshold, `stored value + desired earnings` (never below the floor setting), the house imports power and SOC is above the minimum, the PID discharges to bring the meter to zero. The threshold follows what the energy actually cost, so cheap stored energy is spent earlier and expensive stored energy is not sold at a loss.
@@ -90,17 +95,25 @@ When the experimental planner override is off, each time the grid meter reports,
 
 Charging and discharging both use a fixed assumed efficiency of 97 % (94.09 % round trip), independent of power or whether charging is from grid or PV. This is an estimate, not a measured value.
 
-### Experimental quarter-hour planner
+### Quarter-hour planner
 
 The planner estimates SOC, power and earnings across the available 15-minute prices. It compares multiple chronological charge/discharge cycles, values solar charging at the forgone export price, and applies the desired earnings threshold to each cycle. Export is valued according to the tax switch; NOM uses expected household demand and is allowed down to the minimum SOC. With tax-inclusive export, the minimum SOC is also the export limit. Otherwise export stops at the higher of 30 % and the minimum SOC.
 
 When actual SOC is below the discharge minimum, the plan starts at the measured SOC. A profitable charge/discharge cycle must first charge enough to restore the minimum and retains that energy; planning does not itself force a recovery charge. Live discharge remains blocked at or below the minimum.
 
-To test it, configure the same quarter-hour tariff sensor as both the current electricity price and price forecast, and inspect **Experimental quarter-hour plan** first. Then, only if you choose to control the inverter, turn on **Battery control enabled** and **Experimental planner override**. The planner selector alone never enables control. Switching it off returns to the existing strategy; manual overrides keep priority.
+Configure the same quarter-hour tariff sensor as both the current electricity price and price forecast, and inspect **Quarter-hour plan** first. Then, only if you choose to control the inverter, turn on **Battery control enabled**. The planner selector alone never enables control. Switching the planner off returns to the existing strategy; manual overrides keep priority.
 
-When the plan or required readings are stale, a price, tax or earnings setting differs from the plan, or the current price does not match the quarter forecast, planner control stops rather than falling back to the existing strategy. `Control: status` reports `planner_price_mismatch` when the selected current price differs. The planner watchdog can stop control even without a new P1 report. Disabling battery control or an actuator error also clears the planner selection.
+When the plan or required readings are stale, a price, tax or earnings setting differs from the plan, or the current price does not match the quarter forecast, planner control stops rather than falling back to the existing strategy. `Control: status` reports `planner_price_mismatch` when the selected current price differs. The planner watchdog can stop control even without a new P1 report. An actuator error also clears the planner selection.
 
-This is experimental and has only been tested offline. Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and fixed efficiency. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once every five minutes, and once when the planner override is enabled. If a calculation is already running, the enable-triggered recalculation waits for it to finish. A computation that exceeds its work limit is unavailable. After the first plan, recalculation retains the active quarter's planned action and projects its remaining effect on SOC before optimizing later quarters. A changed current price, tax, or earnings setting makes the plan unavailable until its assumptions match again or the quarter ends. The displayed profit excludes a retained current quarter. Actual SOC, phase caps and other safety checks still apply before each command.
+Plans are estimates, not guaranteed maximum earnings: the search uses bounded inventory levels and contiguous charge/discharge blocks, a constant daytime average household load and fixed efficiency. Missing solar hours cause the planner to omit the entire solar forecast and report `solar_included: false`. Plans are recalculated in the background at most once every five minutes, and once when the planner is enabled. If a calculation is already running, the enable-triggered recalculation waits for it to finish. A computation that exceeds its work limit is unavailable. After the first plan, recalculation retains the active quarter's planned action and projects its remaining effect on SOC before optimizing later quarters. A changed current price, tax, or earnings setting makes the plan unavailable until its assumptions match again or the quarter ends. The displayed profit excludes a retained current quarter. Actual SOC, phase caps and other safety checks still apply before each command.
+
+### Inverter powersave
+
+Select the actual inverter power switch and configure the net battery power sensor first. Powersave is off by default and must be explicitly enabled; selecting the planner does not enable it. Once enabled, the setting is restored after restart and the integration requests that the inverter be on at startup. Battery control still starts off. Powersave only switches the inverter off while both planner and battery control are enabled, a fresh valid plan covers the idle period, the SOC and battery power readings are fresh, battery power is exactly zero and both forced-mode switches are confirmed off. A manual override keeps it on.
+
+The inverter stays on for the configured cooldown after startup or any nonzero battery power, wakes before planned work, and never deliberately starts an off period shorter than 15 minutes. It is kept on at or below the powersave minimum SOC, and runs for the configured maintenance duration at least once per maintenance interval. It waits at least one minute after confirmed power-on before issuing charge or discharge commands. Missing or stale readings, an unavailable or changed plan, disabled control or planner, and invalid settings request power on. The **Inverter powersave status** sensor reports the decision or a failed write.
+
+The powersave implementation is tested offline only. A running Home Assistant, working Modbus connection and correct sensor reports are required; the integration cannot guarantee a wake-up or the maintenance interval during an outage or failed write. Verify the switch and readings and monitor the inverter closely before relying on powersave.
 
 ### The PID loop
 
@@ -139,9 +152,9 @@ Set the timeout, then turn on **Manual maximum charge** or **Manual maximum disc
 
 The `sim/` directory has offline tools used to choose the defaults from real Home Assistant history: `build_trace.py` turns a history export into a trace, `closed_loop.py` simulates the strategy against the reconstructed load without the battery, and `replay.py` replays decisions without a plant model. They never talk to Home Assistant.
 
-The diagnostic **Experimental quarter-hour plan** exposes a `slots` attribute with timestamps, prices, estimated power (positive is discharge), charge source and end-of-slot SOC. It is separate from the existing shadow proposal; it controls the battery only when the explicit planner override and battery control switches are both on. It requires a contiguous 15-minute price forecast and uses only the remaining duration of the current slot when that slot is available.
+The diagnostic **Quarter-hour plan** exposes a `slots` attribute with timestamps, prices, estimated power (positive is discharge), charge source and end-of-slot SOC. It is separate from the existing shadow proposal; it controls the battery only when the planner and battery control switches are both on. It requires a contiguous 15-minute price forecast and uses only the remaining duration of the current slot when that slot is available.
 
-In Home Assistant, open the diagnostic sensor's attributes to inspect its plan and estimated profit. A custom forecast-capable dashboard card, such as ApexCharts Card, can plot the `slots` attribute as price, planned power and SOC series. The ordinary history graph cannot show these future values directly. A plan below the configured minimum SOC is unavailable and planner control remains idle.
+In Home Assistant, open the diagnostic sensor's attributes to inspect its plan and estimated profit. A custom forecast-capable dashboard card, such as ApexCharts Card, can plot the `slots` attribute as price, planned power and SOC series. The ordinary history graph cannot show these future values directly.
 
 Optional hourly forecast inputs can be selected explicitly for today's Solar Forecast ML hybrid forecast and tomorrow's Solar Forecast ML forecast. The diagnostic displays each hourly kWh value divided evenly across its four quarters as `solar_forecast_kwh`. When the solar forecast covers every planned quarter, the grid-cycle estimate takes solar surplus and forgone export revenue into account. Otherwise it leaves solar out and reports `solar_included: false`; missing hours are not treated as zero.
 

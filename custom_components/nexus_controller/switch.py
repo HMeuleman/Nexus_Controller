@@ -14,12 +14,14 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_INVERTER_POWER,
     DOMAIN,
     MANUAL_CHARGE,
     MANUAL_DISCHARGE,
     SET_CONTROL_ENABLED,
     SET_EXPORT_INCLUDES_TAX,
     SET_PLANNER_OVERRIDE,
+    SET_POWERSAVE_ENABLED,
 )
 from .coordinator import NexusCoordinator
 
@@ -36,6 +38,7 @@ async def async_setup_entry(
             NexusControlSwitch(coordinator),
             NexusExportTaxSwitch(coordinator),
             NexusPlannerSwitch(coordinator),
+            NexusPowerSaveSwitch(coordinator),
             NexusManualSwitch(coordinator, MANUAL_CHARGE, "charge"),
             NexusManualSwitch(coordinator, MANUAL_DISCHARGE, "discharge"),
         ]
@@ -110,7 +113,7 @@ class NexusControlSwitch(_NexusSwitch):
 
 
 class NexusPlannerSwitch(_NexusSwitch):
-    """Select the experimental planner; always off after startup."""
+    """Select the planner without enabling battery control."""
 
     _key = SET_PLANNER_OVERRIDE
     _attr_entity_category = EntityCategory.CONFIG
@@ -122,6 +125,29 @@ class NexusPlannerSwitch(_NexusSwitch):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Return to the existing strategy."""
         await self.coordinator.async_set_planner_override(False)
+
+
+class NexusPowerSaveSwitch(_NexusSwitch, RestoreEntity):
+    """Explicitly enable optional inverter powersave and restore the user's choice."""
+
+    _key = SET_POWERSAVE_ENABLED
+    _attr_entity_category = EntityCategory.CONFIG
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (
+            (last := await self.async_get_last_state()) is not None
+            and last.state == "on"
+            and self.coordinator.configured_entity_id(CONF_INVERTER_POWER)
+        ):
+            await self.coordinator.async_set_powersave(True)
+            self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_powersave(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_powersave(False)
 
 
 class NexusExportTaxSwitch(_NexusSwitch, RestoreEntity):

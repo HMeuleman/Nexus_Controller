@@ -15,12 +15,13 @@
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
           "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
-          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, experimenteel plan)",
-          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, experimenteel plan)",
+          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, planner)",
+          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, planner)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
+          "inverter_power_entity": "Omvormer aan/uit-schakelaar (optioneel)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
@@ -30,7 +31,7 @@
       "already_configured": "Nexus Controller is al geconfigureerd."
     },
     "error": {
-      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
+      "duplicate_entities": "Selecteer verschillende fase- en zonnepaneelsensoren en verschillende omvormer- en batterijsturingsschakelaars."
     }
   },
   "options": {
@@ -48,19 +49,20 @@
           "electricity_price_entity": "Sensor voor elektriciteitsprijs",
           "price_forecast_entity": "Sensor met prijsverwachting (optioneel; standaard het forecast-attribuut van de prijssensor)",
           "solar_forecast_entity": "Sensor met verwachte resterende zonne-energie (kWh tot zonsondergang, of 's nachts voor de komende dag; optioneel)",
-          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, experimenteel plan)",
-          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, experimenteel plan)",
+          "solar_hourly_today_entity": "Solar ML-uurverwachting voor vandaag (optioneel, planner)",
+          "solar_hourly_tomorrow_entity": "Solar ML-uurverwachting voor morgen (optioneel, planner)",
           "charge_enable_entity": "Schakelaar batterij laden",
           "charge_power_entity": "Laadvermogen batterij",
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
+          "inverter_power_entity": "Omvormer aan/uit-schakelaar (optioneel)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
       }
     },
     "error": {
-      "duplicate_entities": "Selecteer elke fase- en zonnepaneelsensor maar één keer."
+      "duplicate_entities": "Selecteer verschillende fase- en zonnepaneelsensoren en verschillende omvormer- en batterijsturingsschakelaars."
     }
   },
   "entity": {
@@ -91,9 +93,15 @@
       "control_mode": {"name": "Sturing: modus"},
       "control_power": {"name": "Sturing: vermogen"},
       "control_status": {"name": "Sturing: status"},
-      "experimental_quarter_plan": {"name": "Experimenteel kwartierplan"}
+      "powersave_status": {"name": "Omvormer energiebesparing status"},
+      "experimental_quarter_plan": {"name": "Kwartierplan"}
     },
     "number": {
+      "powersave_cooldown_min": {"name": "Omvormer energiebesparing wachttijd"},
+      "powersave_lead_min": {"name": "Omvormer tijdig inschakelen"},
+      "powersave_maintenance_interval_h": {"name": "Omvormer onderhoudsinterval"},
+      "powersave_maintenance_duration_min": {"name": "Omvormer onderhoudsduur"},
+      "powersave_min_soc": {"name": "Omvormer energiebesparing minimale SOC"},
       "reserved_room_w": {"name": "Gereserveerde ruimte per fase"},
       "max_charge_price": {"name": "Maximale prijs voor laden van het net"},
       "discharge_price_above": {"name": "Minimale prijs voor dekken huisverbruik (ondergrens)"},
@@ -118,8 +126,9 @@
       "stored_energy_value": {"name": "Waarde opgeslagen energie"}
     },
     "switch": {
+      "powersave_enabled": {"name": "Omvormer energiebesparing"},
       "control_enabled": {"name": "Batterijsturing ingeschakeld"},
-      "planner_override_enabled": {"name": "Experimentele plannerbesturing"},
+      "planner_override_enabled": {"name": "Planner"},
       "manual_charge": {"name": "Handmatig maximaal laden"},
       "manual_discharge": {"name": "Handmatig maximaal ontladen"},
       "export_includes_tax": {"name": "Teruglevering vergoed incl. belasting"}

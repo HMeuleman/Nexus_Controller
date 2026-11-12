@@ -22,6 +22,7 @@ CONF_CHARGE_ENABLE: Final = "charge_enable_entity"
 CONF_CHARGE_POWER: Final = "charge_power_entity"
 CONF_DISCHARGE_ENABLE: Final = "discharge_enable_entity"
 CONF_DISCHARGE_POWER: Final = "discharge_power_entity"
+CONF_INVERTER_POWER: Final = "inverter_power_entity"
 CONF_FUSE_LIMIT: Final = "fuse_limit_amps"
 
 # Legacy config keys, only read to seed the new setting entities.
@@ -56,6 +57,12 @@ SET_DISCHARGE_OFFSET: Final = "discharge_offset_w"
 SET_EXPORT_INCLUDES_TAX: Final = "export_includes_tax"
 SET_CONTROL_ENABLED: Final = "control_enabled"
 SET_PLANNER_OVERRIDE: Final = "planner_override_enabled"
+SET_POWERSAVE_ENABLED: Final = "powersave_enabled"
+SET_POWERSAVE_COOLDOWN: Final = "powersave_cooldown_min"
+SET_POWERSAVE_LEAD: Final = "powersave_lead_min"
+SET_POWERSAVE_INTERVAL: Final = "powersave_maintenance_interval_h"
+SET_POWERSAVE_DURATION: Final = "powersave_maintenance_duration_min"
+SET_POWERSAVE_MIN_SOC: Final = "powersave_min_soc"
 
 # The two writable tracker values, also exposed as numbers.
 TRACK_EARNED_TOTAL: Final = "earned_total"
@@ -97,7 +104,13 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_MANUAL_TIMEOUT: 30.0,
     SET_EXPORT_INCLUDES_TAX: False,
     SET_CONTROL_ENABLED: False,
-    SET_PLANNER_OVERRIDE: False,
+    SET_PLANNER_OVERRIDE: True,
+    SET_POWERSAVE_ENABLED: False,
+    SET_POWERSAVE_COOLDOWN: 15.0,
+    SET_POWERSAVE_LEAD: 5.0,
+    SET_POWERSAVE_INTERVAL: 24.0,
+    SET_POWERSAVE_DURATION: 30.0,
+    SET_POWERSAVE_MIN_SOC: 8.0,
 }
 DEFAULT_STORED_VALUE: Final = 0.10
 BATTERY_CAPACITY_KWH: Final = 20.8
@@ -166,6 +179,7 @@ ENTITY_LABELS: Final = {
     "control_mode": ("control_mode", None),
     "control_power": ("control_power", "W"),
     "control_status": ("control_status", None),
+    "powersave_status": ("powersave_status", None),
     "experimental_quarter_plan": ("experimental_quarter_plan", None),
 }
 

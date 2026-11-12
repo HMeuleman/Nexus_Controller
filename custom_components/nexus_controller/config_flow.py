@@ -20,6 +20,7 @@ from .const import (
     CONF_GRID_POWER_L1,
     CONF_GRID_POWER_L2,
     CONF_GRID_POWER_L3,
+    CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
     CONF_SOLAR_HOURLY_TODAY,
@@ -107,6 +108,12 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
         else:
             schema[vol.Optional(key)] = _entity_selector("sensor")
+    if defaults.get(CONF_INVERTER_POWER):
+        schema[vol.Optional(CONF_INVERTER_POWER, default=defaults[CONF_INVERTER_POWER])] = (
+            _entity_selector("switch")
+        )
+    else:
+        schema[vol.Optional(CONF_INVERTER_POWER)] = _entity_selector("switch")
     return vol.Schema(schema)
 
 
@@ -114,7 +121,12 @@ def _has_duplicate_entities(user_input: dict) -> bool:
     """Reject duplicate phase or PV sensor assignments."""
     keys = (*PHASE_POWER_ENTITIES, *PV_POWER_ENTITIES)
     selections = [user_input[key] for key in keys if user_input.get(key)]
-    return len(selections) != len(set(selections))
+    switches = [
+        user_input[key]
+        for key in (CONF_INVERTER_POWER, CONF_CHARGE_ENABLE, CONF_DISCHARGE_ENABLE)
+        if user_input.get(key)
+    ]
+    return len(selections) != len(set(selections)) or len(switches) != len(set(switches))
 
 
 def _validation_error(user_input: dict) -> str | None:
@@ -173,6 +185,7 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_SOLAR_FORECAST,
                 CONF_SOLAR_HOURLY_TODAY,
                 CONF_SOLAR_HOURLY_TOMORROW,
+                CONF_INVERTER_POWER,
             ):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)

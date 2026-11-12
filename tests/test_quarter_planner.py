@@ -1843,16 +1843,16 @@ def test_planner_switch_does_not_restore_and_forwards_user_choice():
     coordinator.async_set_planner_override.assert_awaited_once_with(True)
 
 
-def test_planner_override_defaults_off_on_new_coordinator():
+def test_planner_override_defaults_on_without_enabling_control():
     coordinator = SimpleNamespace(entry=SimpleNamespace(data={}, options={}))
 
     settings = NexusCoordinator._initial_settings(coordinator)
 
     assert settings[SET_CONTROL_ENABLED] is False
-    assert settings[SET_PLANNER_OVERRIDE] is False
+    assert settings[SET_PLANNER_OVERRIDE] is True
 
 
-def test_disabling_battery_control_also_clears_planner_override():
+def test_disabling_battery_control_preserves_planner_selection():
     coordinator = SimpleNamespace(
         settings={SET_CONTROL_ENABLED: True, SET_PLANNER_OVERRIDE: True},
         _quarter_refresh_pending=True,
@@ -1864,7 +1864,7 @@ def test_disabling_battery_control_also_clears_planner_override():
     asyncio.run(NexusCoordinator.async_set_control(coordinator, False))
 
     assert coordinator.settings[SET_CONTROL_ENABLED] is False
-    assert coordinator.settings[SET_PLANNER_OVERRIDE] is False
+    assert coordinator.settings[SET_PLANNER_OVERRIDE] is True
     assert coordinator._quarter_refresh_pending is False
     coordinator._async_release.assert_awaited_once()
 

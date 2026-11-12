@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from homeassistant.components import persistent_notification
@@ -33,6 +34,7 @@ from .const import (
     CONF_ELECTRICITY_PRICE,
     CONF_FUSE_LIMIT,
     CONF_GRID_POWER_L1,
+    CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
     CONF_SOLAR_HOURLY_TODAY,
@@ -70,6 +72,12 @@ from .const import (
     SET_PID_START_ERROR,
     SET_PID_STOP_ERROR,
     SET_PLANNER_OVERRIDE,
+    SET_POWERSAVE_COOLDOWN,
+    SET_POWERSAVE_DURATION,
+    SET_POWERSAVE_ENABLED,
+    SET_POWERSAVE_INTERVAL,
+    SET_POWERSAVE_LEAD,
+    SET_POWERSAVE_MIN_SOC,
     SET_RESERVED_ROOM,
     SET_SOLAR_BLOCK,
     SET_TAX,
@@ -82,6 +90,7 @@ from .const import (
 from .control import PIDMemory, PIDTuning, simulate_closed_loop_step
 from .dispatch import DispatchPlan, DispatchSettings
 from .net_charge import ExportSettings, NetChargeSettings
+from .powersave import PowerSaveMemory, PowerSaveSettings, decide_powersave, schedule_window
 from .quarter_planner import current_plan_dispatch, forecast_quarters_with_current, plan_quarters
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
@@ -139,6 +148,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self.tracker = BatteryTracker(BATTERY_CAPACITY_KWH)
         self.sample_estimator = SampleIntervalEstimator(DEFAULT_SAMPLE_INTERVAL_S)
         self._store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
+        self._powersave_store: Store = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.powersave"
+        )
+        started = time.monotonic()
+        self._powersave_memory = PowerSaveMemory(started, started, started)
+        self._powersave_saved_maintenance = started
+        self._powersave_wake_pending = False
         self._lock = asyncio.Lock()
         self._grid_samples = 0
         self._controlled_samples = 0
@@ -180,6 +196,21 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         stored = await self._store.async_load()
         if isinstance(stored, dict):
             self.tracker.state = BatteryTracker.state_from_dict(stored)
+        saved = await self._powersave_store.async_load()
+        now_s = time.monotonic()
+        now_wall = dt_util.utcnow().timestamp()
+        try:
+            previous = (
+                float(saved["maintenance_timestamp"]) if isinstance(saved, dict) else now_wall
+            )
+            if not math.isfinite(previous) or previous > now_wall:
+                previous = now_wall
+        except (KeyError, TypeError, ValueError, OverflowError):
+            previous = now_wall
+        maintenance = now_s + previous - now_wall
+        self._powersave_memory = PowerSaveMemory(now_s, now_s, maintenance)
+        self._powersave_saved_maintenance = maintenance
+        self._powersave_store.async_delay_save(self._powersave_data, 60)
         grid_entity = self.configured_entity_id(CONF_GRID_POWER_L1)
         if grid_entity:
             self._unsubscribers.append(
@@ -187,6 +218,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             )
             self._unsubscribers.append(
                 async_track_state_report_event(self.hass, [grid_entity], self._on_grid_event)
+            )
+        inverter_entity = self.configured_entity_id(CONF_INVERTER_POWER)
+        if inverter_entity:
+            self._unsubscribers.append(
+                async_track_state_change_event(
+                    self.hass, [inverter_entity], self._on_inverter_power_event
+                )
+            )
+        battery_entity = self.configured_entity_id(CONF_BATTERY_POWER)
+        if battery_entity and inverter_entity:
+            self._unsubscribers.append(
+                async_track_state_change_event(
+                    self.hass, [battery_entity], self._on_powersave_battery_event
+                )
             )
 
     async def async_shutdown(self) -> None:
@@ -205,6 +250,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 pass
         if self._control_was_on:
             await self._async_release()
+        if self.settings[SET_POWERSAVE_ENABLED] or self._powersave_wake_pending:
+            await self._async_set_inverter_power(True)
+        await self._powersave_store.async_save(self._powersave_data())
         await self._store.async_save(self.tracker.as_dict())
         await super().async_shutdown()
 
@@ -224,6 +272,33 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._settle_cancel = None
         self.hass.async_create_task(self.async_refresh())
 
+    @callback
+    def _on_inverter_power_event(self, event: Event) -> None:
+        state = event.data.get("new_state")
+        previous = event.data.get("old_state")
+        if state is not None and previous is not None and state.state == previous.state:
+            return
+        now_s = time.monotonic()
+        self._powersave_memory = replace(
+            self._powersave_memory,
+            on_since_s=now_s if state is not None and state.state == "on" else None,
+        )
+        if self.settings[SET_POWERSAVE_ENABLED] or self.settings[SET_CONTROL_ENABLED]:
+            self.hass.async_create_task(self.async_refresh())
+
+    @callback
+    def _on_powersave_battery_event(self, event: Event) -> None:
+        state = event.data.get("new_state")
+        if state is None:
+            return
+        power = sum_power_states([(state.state, state.attributes.get("unit_of_measurement"))])
+        if power is not None and power != 0:
+            self._powersave_memory = replace(
+                self._powersave_memory, last_activity_s=time.monotonic()
+            )
+        if self.settings[SET_POWERSAVE_ENABLED]:
+            self.hass.async_create_task(self.async_refresh())
+
     def set_setting(self, key: str, value: float | bool) -> None:
         """Change a runtime setting (called by the number and switch entities)."""
         self.settings[key] = value
@@ -238,7 +313,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             await self.async_refresh()
         else:
             self._manual_mode = None
-            self.settings[SET_PLANNER_OVERRIDE] = False
             self._quarter_refresh_pending = False
             await self._async_release()
             self._control_status = "disabled"
@@ -253,6 +327,18 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         elif not enabled:
             self._quarter_refresh_pending = False
         self._controlled_samples = self._grid_samples - 1
+        await self.async_refresh()
+
+    async def async_set_powersave(self, enabled: bool) -> None:
+        """Enable optional inverter powersave without enabling battery control."""
+        entity_id = self.configured_entity_id(CONF_INVERTER_POWER)
+        if enabled and (not entity_id or not entity_id.startswith("switch.")):
+            raise ServiceValidationError(
+                "Select an inverter power switch before enabling powersave"
+            )
+        self.settings[SET_POWERSAVE_ENABLED] = enabled
+        if not enabled:
+            self._powersave_wake_pending = True
         await self.async_refresh()
 
     @property
@@ -359,7 +445,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         data["discharge_threshold"] = self._discharge_threshold()
 
         plan = self._plan(data, now, battery_power, solar_fill)
-        await self._async_control(data, plan, phases, battery_power, limits)
+        inverter_ready = await self._async_powersave_step(data, now, phases, battery_power, limits)
+        if inverter_ready:
+            await self._async_control(data, plan, phases, battery_power, limits)
+        else:
+            data["control_mode"] = "idle"
+            data["control_power"] = 0.0
+            data["control_status"] = "inverter_not_ready"
         self._schedule_experimental_quarter_plan(data, now, limits)
         self._store.async_delay_save(self.tracker.as_dict, 60)
         return data
@@ -993,6 +1085,132 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if state is None:
             return None
         return sum_power_states([(state.state, state.attributes.get("unit_of_measurement"))])
+
+    def _powersave_data(self) -> dict[str, float]:
+        return {
+            "maintenance_timestamp": dt_util.utcnow().timestamp()
+            + self._powersave_memory.maintenance_s
+            - time.monotonic()
+        }
+
+    async def _async_set_inverter_power(self, on: bool) -> bool:
+        entity_id = self.configured_entity_id(CONF_INVERTER_POWER)
+        if not entity_id or not entity_id.startswith("switch."):
+            return False
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+        if state.state == ("on" if on else "off"):
+            return True
+        try:
+            await self.hass.services.async_call(
+                "switch", "turn_on" if on else "turn_off", {"entity_id": entity_id}, blocking=True
+            )
+        except Exception as err:
+            _LOGGER.error("Setting inverter power failed: %s", err)
+            return False
+        return True
+
+    async def _async_powersave_step(
+        self,
+        data: dict[str, float | str | None],
+        now: datetime,
+        phases: tuple,
+        battery_power: float | None,
+        limits: tuple[float | None, float | None],
+    ) -> bool:
+        """Apply an opted-in powersave decision and gate commands on confirmed warmup."""
+        entity_id = self.configured_entity_id(CONF_INVERTER_POWER)
+        if not entity_id:
+            data["powersave_status"] = "not_configured"
+            return True
+        state = self.hass.states.get(entity_id)
+        inverter_on = (
+            state.state == "on" if state is not None and state.state in ("on", "off") else None
+        )
+        enabled = bool(self.settings[SET_POWERSAVE_ENABLED])
+        planner_enabled = bool(
+            self.settings[SET_PLANNER_OVERRIDE] and self.settings[SET_CONTROL_ENABLED]
+        )
+        now_s = time.monotonic()
+        window = None
+        ages = self._planner_measurement_ages(now) if enabled else None
+        interval = self.sample_estimator.interval_s
+        readings_fresh = (
+            ages is not None
+            and math.isfinite(interval)
+            and interval > 0
+            and all(0 <= age <= max(30.0, interval * 3) for age in ages)
+        )
+        if enabled and planner_enabled and readings_fresh:
+            action = self._planner_action(data, now, phases, battery_power, limits)
+            if action.reason not in (
+                "planner_unavailable_or_stale",
+                "planner_price_mismatch",
+                "planned_inputs_unavailable",
+            ):
+                window = schedule_window(self.experimental_quarter_plan.get("slots"), now)
+        plan_end = now_s + window[0] - now.timestamp() if window is not None else None
+        next_work = (
+            now_s + window[1] - now.timestamp()
+            if window is not None and window[1] is not None
+            else None
+        )
+        try:
+            settings = PowerSaveSettings(
+                cooldown_s=float(self.settings[SET_POWERSAVE_COOLDOWN]) * 60,
+                lead_s=max(float(self.settings[SET_POWERSAVE_LEAD]) * 60, 60.0) + 10,
+                maintenance_interval_s=float(self.settings[SET_POWERSAVE_INTERVAL]) * 3600 - 10,
+                maintenance_duration_s=float(self.settings[SET_POWERSAVE_DURATION]) * 60,
+                min_soc_pct=float(self.settings[SET_POWERSAVE_MIN_SOC]),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            data["powersave_status"] = "invalid_settings_or_clock"
+            if enabled or self._powersave_wake_pending:
+                await self._async_set_inverter_power(True)
+            return False
+        decision = decide_powersave(
+            now_s=now_s,
+            inverter_on=inverter_on,
+            enabled=enabled,
+            planner_enabled=planner_enabled,
+            plan_valid=window is not None,
+            schedule_end_s=plan_end,
+            next_work_s=next_work,
+            soc_pct=data.get(CONF_BATTERY_SOC),  # type: ignore[arg-type]
+            battery_power_w=battery_power,
+            readings_fresh=readings_fresh,
+            manual_active=self._manual_mode is not None,
+            memory=self._powersave_memory,
+            settings=settings,
+        )
+        self._powersave_memory = decision.memory
+        data["powersave_status"] = decision.reason
+        if decision.memory.maintenance_s - self._powersave_saved_maintenance >= 60:
+            self._powersave_saved_maintenance = decision.memory.maintenance_s
+            self._powersave_store.async_delay_save(self._powersave_data, 60)
+        if self._powersave_wake_pending and inverter_on:
+            self._powersave_wake_pending = False
+        if (enabled or self._powersave_wake_pending) and decision.power == "on":
+            if inverter_on is not True:
+                if not await self._async_set_inverter_power(True):
+                    data["powersave_status"] = "inverter_write_failed"
+        elif enabled and decision.power == "off" and inverter_on is True:
+            force_states = [
+                self.hass.states.get(self.configured_entity_id(key))
+                for key in (CONF_CHARGE_ENABLE, CONF_DISCHARGE_ENABLE)
+            ]
+            if all(force is not None and force.state == "off" for force in force_states):
+                self._powersave_memory = replace(self._powersave_memory, on_since_s=None)
+                if not await self._async_set_inverter_power(False):
+                    data["powersave_status"] = "inverter_write_failed"
+                return False
+            data["powersave_status"] = "waiting_for_forced_modes_to_stop"
+            return bool(
+                decision.memory.on_since_s is not None
+                and now_s - decision.memory.on_since_s >= settings.warmup_s
+            )
+        return bool(inverter_on and decision.ready_for_control)
 
     def _planner_measurement_ages(self, now: datetime) -> tuple[float, ...] | None:
         """Return ages of the configured phase, SOC and battery power reports."""

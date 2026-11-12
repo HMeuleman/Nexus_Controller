@@ -15,12 +15,13 @@
           "electricity_price_entity": "Electricity price sensor",
           "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
           "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
-          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, experimental plan)",
-          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, experimental plan)",
+          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, planner)",
+          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, planner)",
           "charge_enable_entity": "Battery charge switch",
           "charge_power_entity": "Battery charge power",
           "discharge_enable_entity": "Battery discharge switch",
           "discharge_power_entity": "Battery discharge power",
+          "inverter_power_entity": "Inverter power switch (optional)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
@@ -30,7 +31,7 @@
       "already_configured": "Nexus Controller is already configured."
     },
     "error": {
-      "duplicate_entities": "Select each phase and solar sensor only once."
+      "duplicate_entities": "Select distinct phase and solar sensors and distinct inverter and battery control switches."
     }
   },
   "options": {
@@ -48,19 +49,20 @@
           "electricity_price_entity": "Electricity price sensor",
           "price_forecast_entity": "Price forecast sensor (optional; defaults to the forecast attribute of the price sensor)",
           "solar_forecast_entity": "Expected remaining solar energy sensor (kWh until sunset, or for the coming day at night; optional)",
-          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, experimental plan)",
-          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, experimental plan)",
+          "solar_hourly_today_entity": "Solar ML hourly forecast for today (optional, planner)",
+          "solar_hourly_tomorrow_entity": "Solar ML hourly forecast for tomorrow (optional, planner)",
           "charge_enable_entity": "Battery charge switch",
           "charge_power_entity": "Battery charge power",
           "discharge_enable_entity": "Battery discharge switch",
           "discharge_power_entity": "Battery discharge power",
+          "inverter_power_entity": "Inverter power switch (optional)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
       }
     },
     "error": {
-      "duplicate_entities": "Select each phase and solar sensor only once."
+      "duplicate_entities": "Select distinct phase and solar sensors and distinct inverter and battery control switches."
     }
   },
   "entity": {
@@ -91,9 +93,15 @@
       "control_mode": {"name": "Control: mode"},
       "control_power": {"name": "Control: power"},
       "control_status": {"name": "Control: status"},
-      "experimental_quarter_plan": {"name": "Experimental quarter-hour plan"}
+      "powersave_status": {"name": "Inverter powersave status"},
+      "experimental_quarter_plan": {"name": "Quarter-hour plan"}
     },
     "number": {
+      "powersave_cooldown_min": {"name": "Inverter powersave cooldown"},
+      "powersave_lead_min": {"name": "Inverter powersave wake lead"},
+      "powersave_maintenance_interval_h": {"name": "Inverter maintenance interval"},
+      "powersave_maintenance_duration_min": {"name": "Inverter maintenance duration"},
+      "powersave_min_soc": {"name": "Inverter powersave minimum SOC"},
       "reserved_room_w": {"name": "Reserved room per phase"},
       "max_charge_price": {"name": "Max price for charging from grid"},
       "discharge_price_above": {"name": "Minimum price for covering house load (floor)"},
@@ -118,8 +126,9 @@
       "stored_energy_value": {"name": "Value of stored energy"}
     },
     "switch": {
+      "powersave_enabled": {"name": "Inverter powersave"},
       "control_enabled": {"name": "Battery control enabled"},
-      "planner_override_enabled": {"name": "Experimental planner override"},
+      "planner_override_enabled": {"name": "Planner"},
       "manual_charge": {"name": "Manual maximum charge"},
       "manual_discharge": {"name": "Manual maximum discharge"},
       "export_includes_tax": {"name": "Exported energy paid including tax"}
