@@ -1,0 +1,111 @@
+Dashboard card to show planner results:
+
+type: custom:apexcharts-card
+apex_config:
+  chart:
+    zoom:
+      enabled: true
+      type: x
+    toolbar:
+      show: true
+      tools:
+        zoom: true
+        zoomin: true
+        zoomout: true
+        pan: true
+        reset: true
+  legend:
+    show: true
+    showForSingleSeries: true
+    showForNullSeries: true
+    showForZeroSeries: true
+header:
+  show: true
+  title: Batterijplanning
+  show_states: true
+graph_span: 36h
+span:
+  start: hour
+now:
+  show: true
+experimental:
+  color_threshold: true
+yaxis:
+  - id: power
+    decimals: 0
+  - id: price
+    opposite: true
+  - id: soc
+    min: 0
+    max: 100
+    opposite: true
+    decimals: 0
+series:
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Batterijvermogen
+    unit: W
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
+    yaxis_id: power
+    color: blue
+    curve: stepline
+    stroke_width: 2
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        return [[t, s.power_w], [t + s.duration_hours * 3600000 - 1, s.power_w]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Stroomprijs
+    unit: ' €Cent/kWh'
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
+    yaxis_id: price
+    float_precision: 1
+    type: line
+    curve: stepline
+    color: 7CB342
+    color_threshold:
+      - value: 0
+        color: 4DD0E1
+      - value: 10
+        color: 26A69A
+      - value: 15
+        color: 4CAF50
+      - value: 20
+        color: 7CB342
+      - value: 30
+        color: FBC02D
+      - value: 40
+        color: EF6C00
+      - value: 50
+        color: B71C1C
+    stroke_width: 2
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        return [[t, s.price_eur_kwh * 100], [t + s.duration_hours * 3600000 - 1, s.price_eur_kwh * 100]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: SOC
+    unit: '%'
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
+    yaxis_id: soc
+    curve: straight
+    color: aqua
+    stroke_width: 2
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).map(s => [
+        new Date(s.start).getTime() + s.duration_hours * 3600000,
+        s.soc_pct
+      ]);
