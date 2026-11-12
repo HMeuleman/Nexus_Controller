@@ -139,7 +139,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self.price_forecast_taxes: dict[datetime, float] = {}
         self.experimental_quarter_plan: dict = {}
         self._quarter_commitment: dict | None = None
-        self._quarter_commitment_earnings: float | None = None
         self._quarter_task: asyncio.Task | None = None
         self._quarter_last_start: float | None = None
         self._quarter_refresh_pending = False
@@ -301,6 +300,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
     def set_setting(self, key: str, value: float | bool) -> None:
         """Change a runtime setting (called by the number and switch entities)."""
+        if key == SET_MIN_EARNINGS and self.settings.get(key) != value:
+            self._quarter_refresh_pending = True
         self.settings[key] = value
 
     async def async_set_control(self, enabled: bool) -> None:
@@ -549,18 +550,16 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         active = None
         if forecast[0][0] <= now:
             previous = getattr(self, "experimental_quarter_plan", {})
-            previous_earnings = previous.get("minimum_earnings_eur_kwh")
-            candidates = [(slot, previous_earnings) for slot in previous.get("slots", [])]
+            candidates = list(previous.get("slots", []))
             commitment = getattr(self, "_quarter_commitment", None)
             if commitment is not None:
-                candidates.append((commitment, getattr(self, "_quarter_commitment_earnings", None)))
-            for slot, commitment_earnings in candidates:
+                candidates.append(commitment)
+            for slot in candidates:
                 try:
                     start = datetime.fromisoformat(slot["forecast_start"])
                     if start.timestamp() == forecast[0][0].timestamp():
                         active = slot.copy()
                         self._quarter_commitment = active.copy()
-                        self._quarter_commitment_earnings = commitment_earnings
                         break
                 except (KeyError, TypeError, ValueError, AttributeError):
                     continue
@@ -568,7 +567,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 if (
                     active.get("price_eur_kwh") != forecast[0][1]
                     or active.get("export_tax_eur_kwh") != forecast_taxes[0]
-                    or commitment_earnings != min_earnings
                 ):
                     return
         initial_soc = soc
@@ -686,7 +684,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 )
                 if forecast[0][0] <= now:
                     self._quarter_commitment = self.experimental_quarter_plan["slots"][0].copy()
-                    self._quarter_commitment_earnings = min_earnings
         data["experimental_quarter_plan"] = "experimental"
 
     def _experimental_solar_quarters(self, now: datetime) -> dict[datetime, float]:
@@ -1142,7 +1139,15 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             and interval > 0
             and all(0 <= age <= max(30.0, interval * 3) for age in ages)
         )
-        if enabled and planner_enabled and readings_fresh:
+        plan_earnings = self.experimental_quarter_plan.get("minimum_earnings_eur_kwh")
+        if (
+            enabled
+            and planner_enabled
+            and readings_fresh
+            and isinstance(plan_earnings, (int, float))
+            and math.isfinite(plan_earnings)
+            and plan_earnings == self.settings[SET_MIN_EARNINGS]
+        ):
             action = self._planner_action(data, now, phases, battery_power, limits)
             if action.reason not in (
                 "planner_unavailable_or_stale",
@@ -1245,7 +1250,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 return idle
             planned_earnings = float(self.experimental_quarter_plan["minimum_earnings_eur_kwh"])
             current_earnings = float(self.settings[SET_MIN_EARNINGS])
-            if not math.isfinite(planned_earnings) or planned_earnings != current_earnings:
+            if not math.isfinite(planned_earnings) or not math.isfinite(current_earnings):
                 return idle
             slots = self.experimental_quarter_plan["slots"]
             current = None
@@ -1281,6 +1286,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     current = slot
             if current is None:
                 return idle
+            if planned_earnings != current_earnings:
+                commitment = getattr(self, "_quarter_commitment", None)
+                if not isinstance(commitment, dict) or any(
+                    current.get(key) != commitment.get(key)
+                    for key in ("forecast_start", "power_w", "charge_source", "discharge_mode")
+                ):
+                    return idle
             forecast_start = datetime.fromisoformat(current["forecast_start"])
             quote = float(current["price_eur_kwh"])
             current_price = float(data[CONF_ELECTRICITY_PRICE])

@@ -34,6 +34,7 @@ from custom_components.nexus_controller.const import (
 )
 from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.dispatch import DispatchPlan
+from custom_components.nexus_controller.number import SETTINGS, NexusSettingNumber
 from custom_components.nexus_controller.quarter_planner import (
     current_plan_dispatch,
     forecast_quarters,
@@ -1087,16 +1088,19 @@ def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mod
     assert active["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
     assert future["soc_pct"] == pytest.approx(projected_soc, abs=0.01)
 
-    coordinator.settings[SET_MIN_EARNINGS] = 0.20
-    asyncio.run(
-        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
-    )
-    assert data["experimental_quarter_plan"] == "unavailable"
-    coordinator.experimental_quarter_plan = {}
-    asyncio.run(
-        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
-    )
-    assert data["experimental_quarter_plan"] == "unavailable"
+    for earnings in (0.12, 0.16, 0.20):
+        coordinator.settings[SET_MIN_EARNINGS] = earnings
+        asyncio.run(
+            NexusCoordinator._async_experimental_quarter_plan(
+                coordinator, data, now, (10000, 10000)
+            )
+        )
+        assert data["experimental_quarter_plan"] == "experimental"
+        assert coordinator.experimental_quarter_plan["minimum_earnings_eur_kwh"] == earnings
+        assert coordinator.experimental_quarter_plan["slots"][0]["power_w"] == power
+        assert coordinator.experimental_quarter_plan["slots"][0]["soc_pct"] == pytest.approx(
+            projected_soc, abs=0.01
+        )
 
     coordinator.settings[SET_MIN_EARNINGS] = 0.15
     asyncio.run(
@@ -1127,6 +1131,89 @@ def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mod
         )
     )
     assert coordinator.experimental_quarter_plan["slots"][0]["power_w"] == next_power
+
+
+def test_changed_earnings_reoptimizes_future_quarters():
+    start = datetime(2026, 11, 12, 20, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[
+            (start, 0.40),
+            (start + timedelta(minutes=15), 0.20),
+            (start + timedelta(minutes=30), 0.34),
+        ],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan={
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [{
+                "forecast_start": start.isoformat(),
+                "price_eur_kwh": 0.40,
+                "export_tax_eur_kwh": 0.0,
+                "power_w": 0.0,
+                "charge_source": "none",
+                "discharge_mode": "none",
+            }],
+        },
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.0}
+
+    def replan():
+        asyncio.run(
+            NexusCoordinator._async_experimental_quarter_plan(
+                coordinator, data, now, (10000, 10000)
+            )
+        )
+        return coordinator.experimental_quarter_plan["slots"]
+
+    assert [slot["power_w"] for slot in replan()] == [0, 0, 0]
+    coordinator.settings[SET_MIN_EARNINGS] = 0.12
+    active, charge, discharge = replan()
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator.experimental_quarter_plan["minimum_earnings_eur_kwh"] == 0.12
+    assert active["power_w"] == 0
+    assert charge["power_w"] < 0 < discharge["power_w"]
+    coordinator.settings[SET_MIN_EARNINGS] = 0.16
+    assert [slot["power_w"] for slot in replan()] == [0, 0, 0]
+
+
+def test_changing_earnings_requests_immediate_refresh_without_enabling_control():
+    coordinator = SimpleNamespace(
+        entry=SimpleNamespace(entry_id="test"),
+        settings={SET_MIN_EARNINGS: 0.15, SET_CONTROL_ENABLED: False},
+        _quarter_refresh_pending=False,
+        async_refresh=AsyncMock(),
+    )
+    coordinator.set_setting = lambda key, value: NexusCoordinator.set_setting(
+        coordinator, key, value
+    )
+    description = next(setting for setting in SETTINGS if setting.key == SET_MIN_EARNINGS)
+    entity = NexusSettingNumber(coordinator, description)
+    entity.async_write_ha_state = lambda: None
+
+    asyncio.run(entity.async_set_native_value(0.12))
+
+    assert coordinator.settings[SET_MIN_EARNINGS] == 0.12
+    assert coordinator.settings[SET_CONTROL_ENABLED] is False
+    assert coordinator._quarter_refresh_pending is True
+    coordinator.async_refresh.assert_awaited_once()
+
+    coordinator._quarter_refresh_pending = False
+    coordinator.async_refresh.reset_mock()
+    asyncio.run(entity.async_set_native_value(0.12))
+    assert coordinator._quarter_refresh_pending is False
+    coordinator.async_refresh.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -1245,6 +1332,67 @@ def test_coordinator_rejects_stale_plan_and_changed_current_price():
     assert action(now + timedelta(seconds=300)).mode == "discharge"
     assert action(now + timedelta(seconds=361)).mode == "idle"
     coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
+    assert action(now).mode == "idle"
+
+
+def test_earnings_change_keeps_only_committed_current_slot_usable():
+    start = datetime(2026, 11, 12, 20, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+    slot = {
+        "start": start.isoformat(),
+        "forecast_start": start.isoformat(),
+        "duration_hours": 0.25,
+        "price_eur_kwh": 0.50,
+        "export_tax_eur_kwh": 0.0,
+        "power_w": 5000.0,
+        "charge_source": "none",
+        "discharge_mode": "export",
+    }
+    future = {
+        **slot,
+        "start": (start + timedelta(minutes=15)).isoformat(),
+        "forecast_start": (start + timedelta(minutes=15)).isoformat(),
+    }
+    coordinator = SimpleNamespace(
+        experimental_quarter_plan={
+            "generated_at": start.isoformat(),
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [slot, future],
+        },
+        _quarter_commitment=slot.copy(),
+        _quarter_status="experimental",
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.12,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        sample_estimator=SimpleNamespace(interval_s=10),
+        price_forecast=[(start, 0.50), (start + timedelta(minutes=15), 0.50)],
+        price_forecast_taxes={},
+        _planner_measurement_ages=lambda moment: (1, 1, 1, 1, 1),
+    )
+    data = {CONF_BATTERY_SOC: 80.0, CONF_ELECTRICITY_PRICE: 0.50}
+
+    def action(moment, values=data):
+        return NexusCoordinator._planner_action(
+            coordinator, values, moment, (100.0, 100.0, 100.0), 0.0, (3000.0, 3000.0)
+        )
+
+    assert action(now).power_w == 3000.0
+    assert action(now, {**data, CONF_BATTERY_SOC: 10.0}).mode == "idle"
+    assert action(now, {**data, CONF_ELECTRICITY_PRICE: 0.60}).mode == "idle"
+    assert action(start + timedelta(minutes=15)).mode == "idle"
+    coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
+    assert action(now).mode == "idle"
+    coordinator._planner_measurement_ages = lambda moment: (1, 1, 1, 1, 1)
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
+    assert action(now).mode == "idle"
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = True
+    coordinator.price_forecast[0] = (start, 0.51)
+    assert action(now).mode == "idle"
+    coordinator.price_forecast[0] = (start, 0.50)
+    coordinator._quarter_commitment["power_w"] = 4000.0
     assert action(now).mode == "idle"
 
 
@@ -2141,6 +2289,62 @@ def test_enable_during_planning_queues_one_fresh_run(disable_before_completion):
             await asyncio.wait_for(rerun_started.wait(), timeout=2)
             await coordinator._quarter_task
             assert calls == [1, 3]
+
+    asyncio.run(scenario())
+
+
+def test_earnings_change_during_planning_queues_latest_value():
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        rerun_started = asyncio.Event()
+        calls = []
+        now = datetime(2026, 11, 12, 20, 5, tzinfo=UTC)
+
+        async def run(data, moment, limits):
+            calls.append(data["earnings"])
+            if len(calls) == 1:
+                started.set()
+                await release.wait()
+            else:
+                rerun_started.set()
+
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="test"),
+            settings={SET_MIN_EARNINGS: 0.15},
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="experimental",
+            _quarter_refresh_pending=False,
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+
+        async def refresh():
+            NexusCoordinator._schedule_experimental_quarter_plan(
+                coordinator, {"earnings": coordinator.settings[SET_MIN_EARNINGS]}, now, (5000, 5000)
+            )
+
+        coordinator.async_refresh = refresh
+        coordinator.set_setting = lambda key, value: NexusCoordinator.set_setting(
+            coordinator, key, value
+        )
+        description = next(setting for setting in SETTINGS if setting.key == SET_MIN_EARNINGS)
+        entity = NexusSettingNumber(coordinator, description)
+        entity.async_write_ha_state = lambda: None
+
+        await refresh()
+        first_task = coordinator._quarter_task
+        await started.wait()
+        await entity.async_set_native_value(0.12)
+        await entity.async_set_native_value(0.16)
+        assert coordinator._quarter_task is first_task
+        assert calls == [0.15]
+        release.set()
+        await first_task
+        await asyncio.wait_for(rerun_started.wait(), timeout=2)
+        await coordinator._quarter_task
+        assert calls == [0.15, 0.16]
 
     asyncio.run(scenario())
 

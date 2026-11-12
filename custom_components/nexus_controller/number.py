@@ -332,8 +332,14 @@ class NexusSettingNumber(CoordinatorEntity[NexusCoordinator], RestoreNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         """Change the setting."""
+        changed_earnings = (
+            self.entity_description.key == SET_MIN_EARNINGS
+            and self.coordinator.settings.get(SET_MIN_EARNINGS) != value
+        )
         self.coordinator.set_setting(self.entity_description.key, value)
         self.async_write_ha_state()
+        if changed_earnings:
+            await self.coordinator.async_refresh()
 
 
 class NexusTrackerNumber(CoordinatorEntity[NexusCoordinator], NumberEntity):

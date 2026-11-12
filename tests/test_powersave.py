@@ -17,6 +17,7 @@ from custom_components.nexus_controller.const import (
     CONF_DISCHARGE_ENABLE,
     CONF_INVERTER_POWER,
     SET_CONTROL_ENABLED,
+    SET_MIN_EARNINGS,
     SET_PLANNER_OVERRIDE,
     SET_POWERSAVE_ENABLED,
     SET_POWERSAVE_INTERVAL,
@@ -195,7 +196,10 @@ def integration_coordinator(monkeypatch, inverter="on"):
         sample_estimator=SimpleNamespace(interval_s=10.0),
         _planner_measurement_ages=lambda moment: (1, 1, 1, 1, 1),
         _planner_action=lambda *args: DispatchPlan("idle", 0, "planned_idle_or_limit"),
-        experimental_quarter_plan={"slots": slots},
+        experimental_quarter_plan={
+            "slots": slots,
+            "minimum_earnings_eur_kwh": SETTING_DEFAULTS[SET_MIN_EARNINGS],
+        },
         _powersave_memory=PowerSaveMemory(0, 0, 0, 0 if inverter == "on" else None),
         _powersave_saved_maintenance=0,
         _powersave_store=SimpleNamespace(async_delay_save=MagicMock()),
@@ -227,6 +231,14 @@ def test_integration_only_switches_off_when_forced_modes_are_confirmed_idle(monk
         "switch", "turn_off", {"entity_id": "switch.inverter"}, blocking=True
     )
     assert coordinator._powersave_memory.on_since_s is None
+
+
+def test_powersave_does_not_use_future_plan_with_outdated_earnings(monkeypatch):
+    coordinator, _, _, step = integration_coordinator(monkeypatch)
+    coordinator.settings[SET_MIN_EARNINGS] = 0.12
+
+    assert asyncio.run(step()) is True
+    coordinator.hass.services.async_call.assert_not_awaited()
 
 
 def test_integration_wakes_on_low_soc_and_waits_for_confirmed_power_and_warmup(monkeypatch):
