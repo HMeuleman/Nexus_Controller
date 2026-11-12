@@ -133,6 +133,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._quarter_commitment_earnings: float | None = None
         self._quarter_task: asyncio.Task | None = None
         self._quarter_last_start: float | None = None
+        self._quarter_refresh_pending = False
         self._quarter_status = "unavailable"
         self.settings: dict[str, float | bool] = self._initial_settings()
         self.tracker = BatteryTracker(BATTERY_CAPACITY_KWH)
@@ -195,6 +196,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._unsubscribers.clear()
         if self._settle_cancel:
             self._settle_cancel()
+        self._quarter_refresh_pending = False
         if self._quarter_task is not None and not self._quarter_task.done():
             self._quarter_task.cancel()
             try:
@@ -237,13 +239,19 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         else:
             self._manual_mode = None
             self.settings[SET_PLANNER_OVERRIDE] = False
+            self._quarter_refresh_pending = False
             await self._async_release()
             self._control_status = "disabled"
             await self.async_refresh()
 
     async def async_set_planner_override(self, enabled: bool) -> None:
         """Change the planner routing without enabling battery control."""
+        was_enabled = bool(self.settings.get(SET_PLANNER_OVERRIDE, False))
         self.settings[SET_PLANNER_OVERRIDE] = enabled
+        if enabled and not was_enabled:
+            self._quarter_refresh_pending = True
+        elif not enabled:
+            self._quarter_refresh_pending = False
         self._controlled_samples = self._grid_samples - 1
         await self.async_refresh()
 
@@ -368,14 +376,22 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if self._quarter_task is not None and not self._quarter_task.done():
             return
         if (
-            self._quarter_last_start is not None
+            not getattr(self, "_quarter_refresh_pending", False)
+            and self._quarter_last_start is not None
             and started - self._quarter_last_start < EXPERIMENTAL_PLAN_INTERVAL_S
         ):
             return
+        self._quarter_refresh_pending = False
         self._quarter_last_start = started
         self._quarter_task = self.hass.async_create_task(
             self._async_run_experimental_quarter_plan(data.copy(), now, limits)
         )
+
+        def refresh_when_done(task: asyncio.Task) -> None:
+            if not task.cancelled() and getattr(self, "_quarter_refresh_pending", False):
+                self.hass.async_create_task(self.async_refresh())
+
+        self._quarter_task.add_done_callback(refresh_when_done)
 
     async def _async_run_experimental_quarter_plan(
         self,
@@ -409,7 +425,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if (
             not forecast
             or not isinstance(soc, (int, float))
-            or soc < minimum_soc
             or limits[0] is None
             or limits[1] is None
             or min(limits) <= 0
@@ -897,6 +912,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             _LOGGER.error("Battery control stopped: %s", err)
             self.settings[SET_CONTROL_ENABLED] = False
             self.settings[SET_PLANNER_OVERRIDE] = False
+            self._quarter_refresh_pending = False
             self._manual_mode = None
             await self._async_release()
             self._control_status = f"error: {err}"

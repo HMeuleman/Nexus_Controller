@@ -590,6 +590,120 @@ def test_initial_value_is_not_guessed_when_missing():
     assert result.power_w == (0.0, 0.0)
 
 
+def test_planner_below_minimum_can_charge_and_discharge_without_crossing_minimum():
+    result = plan_quarters(
+        [0.10, 0.80],
+        capacity_kwh=10.0,
+        initial_soc_pct=5.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+        initial_value_eur_per_kwh=0.10,
+    )
+
+    assert result.power_w[0] < 0 < result.power_w[1]
+    assert result.soc_pct[0] > 10
+    assert result.soc_pct[1] >= 10
+    assert result.soc_pct[0] == pytest.approx(5 - result.power_w[0] / 4000 / 10 * 100)
+    assert result.soc_pct[1] == pytest.approx(
+        result.soc_pct[0] - result.power_w[1] / 4000 / 10 * 100
+    )
+
+
+def test_below_minimum_unprofitable_plan_stays_idle_at_actual_soc():
+    result = plan_quarters(
+        [0.80, 0.10, 0.20],
+        capacity_kwh=10.0,
+        initial_soc_pct=5.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=0.97,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+        initial_value_eur_per_kwh=0.10,
+    )
+
+    assert result.power_w == (0.0, 0.0, 0.0)
+    assert result.soc_pct == (5.0, 5.0, 5.0)
+
+
+def test_below_minimum_recovery_is_only_charged_once_across_cycles():
+    result = plan_quarters(
+        [0.10, 0.80, 0.10, 0.80],
+        capacity_kwh=10.0,
+        initial_soc_pct=5.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+    )
+
+    assert result.power_w == pytest.approx((-10000, 8000, -10000, 10000))
+    assert result.soc_pct == pytest.approx((30, 10, 35, 10))
+    assert result.profit_eur == pytest.approx(3.10)
+
+
+def test_solar_cycle_below_minimum_retains_recovery_energy():
+    result = plan_quarters(
+        [0.50, 0.75],
+        capacity_kwh=2.5,
+        initial_soc_pct=6.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.20,
+        export_tax_eur_per_kwh=0.11,
+        solar_kwh=[1.0, 0.0],
+    )
+
+    assert result.charge_source[0] == "solar"
+    assert result.power_w == pytest.approx((-4000, 3600))
+    assert result.soc_pct == pytest.approx((46, 10))
+    assert result.profit_eur == pytest.approx(0.186)
+
+
+@pytest.mark.parametrize("use_power_efficiency", [False, True])
+def test_randomized_below_minimum_plans_preserve_real_soc_and_discharge_limit(use_power_efficiency):
+    randomizer = random.Random(827)
+    for _ in range(100):
+        prices = [randomizer.uniform(-0.1, 0.9) for _ in range(12)]
+        initial = randomizer.uniform(0, 9.99)
+        durations = [randomizer.uniform(0.02, 0.25), *([0.25] * 11)]
+        solar = [randomizer.uniform(0, 1) for _ in prices]
+        plan = plan_quarters(
+            prices,
+            capacity_kwh=20.8,
+            initial_soc_pct=initial,
+            min_soc_pct=10.0,
+            max_power_w=10_000.0,
+            efficiency=0.97,
+            min_profit_eur_per_kwh=0.15,
+            export_tax_eur_per_kwh=0.11,
+            export_reserve_soc_pct=30.0,
+            initial_value_eur_per_kwh=0.25,
+            house_load_w=500.0,
+            solar_kwh=solar,
+            durations_hours=durations,
+            use_power_efficiency=use_power_efficiency,
+        )
+
+        previous = initial
+        for power, soc, duration in zip(plan.power_w, plan.soc_pct, durations, strict=True):
+            assert abs(power) <= 10_000 + 1e-7
+            expected = previous + (-power * 0.97 if power < 0 else -power / 0.97) * duration / 208
+            assert soc == pytest.approx(expected, abs=1e-6)
+            assert 0 <= soc <= 100 + 1e-7
+            if power > 0:
+                assert previous > 10
+                assert soc >= 10 - 1e-7
+                if power > 500:
+                    assert soc >= 30 - 1e-7
+            previous = soc
+
+
 def test_short_peak_can_discharge_part_of_existing_inventory():
     result = plan_quarters(
         [0.20, 0.80, 0.20],
@@ -1227,6 +1341,75 @@ def test_diagnostic_planner_uses_conditional_export_reserve():
     assert 0 < run() <= 500
 
 
+@pytest.mark.parametrize("active_power", [None, 6000.0, -1000.0])
+def test_coordinator_plans_from_actual_below_minimum_soc(active_power):
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    existing = {}
+    if active_power is not None:
+        existing = {
+            "minimum_earnings_eur_kwh": 0.15,
+            "slots": [{
+                "forecast_start": start.isoformat(),
+                "price_eur_kwh": 0.80,
+                "export_tax_eur_kwh": 0.0,
+                "power_w": active_power,
+                "charge_source": "grid" if active_power < 0 else "none",
+                "discharge_mode": "export" if active_power > 0 else "none",
+            }],
+        }
+    coordinator = SimpleNamespace(
+        price_forecast=[
+            (start, 0.80),
+            (start + timedelta(minutes=15), 0.10),
+            (start + timedelta(minutes=30), 0.80),
+        ],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment: {},
+        experimental_quarter_plan=existing,
+    )
+    data = {CONF_BATTERY_SOC: 5.0, "tax_used": 0.0}
+
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+
+    assert data["experimental_quarter_plan"] == "experimental"
+    active, charge, discharge = coordinator.experimental_quarter_plan["slots"]
+    assert active["power_w"] == (active_power or 0.0)
+    expected_soc = 5.0 + (1000 * 10 / 60 / 1000 * 0.97 / 20.8 * 100 if active_power == -1000 else 0)
+    assert active["soc_pct"] == pytest.approx(expected_soc, abs=0.01)
+    assert charge["power_w"] < 0 < discharge["power_w"]
+    assert discharge["soc_pct"] >= 10
+    if active_power == 6000:
+        action = current_plan_dispatch(
+            active,
+            now=now,
+            soc_pct=5.0,
+            min_soc_pct=10.0,
+            export_reserve_soc_pct=10.0,
+            max_charge_w=10000.0,
+            max_discharge_w=10000.0,
+            grid_import_w=500.0,
+            battery_power_w=0.0,
+            measurement_ages_s=(1, 1, 1, 1, 1),
+            max_measurement_age_s=30,
+        )
+        assert action.mode == "idle"
+
+
 def test_coordinator_rejects_a_future_tariff_as_the_current_slot():
     now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
     future = now + timedelta(minutes=15)
@@ -1672,6 +1855,7 @@ def test_planner_override_defaults_off_on_new_coordinator():
 def test_disabling_battery_control_also_clears_planner_override():
     coordinator = SimpleNamespace(
         settings={SET_CONTROL_ENABLED: True, SET_PLANNER_OVERRIDE: True},
+        _quarter_refresh_pending=True,
         _manual_mode=None,
         _async_release=AsyncMock(),
         async_refresh=AsyncMock(),
@@ -1681,6 +1865,7 @@ def test_disabling_battery_control_also_clears_planner_override():
 
     assert coordinator.settings[SET_CONTROL_ENABLED] is False
     assert coordinator.settings[SET_PLANNER_OVERRIDE] is False
+    assert coordinator._quarter_refresh_pending is False
     coordinator._async_release.assert_awaited_once()
 
 
@@ -1690,6 +1875,7 @@ def test_control_error_disables_planner_override():
     )
     coordinator = SimpleNamespace(
         settings={SET_CONTROL_ENABLED: True, SET_DIRECTION_DELAY: 60, SET_PLANNER_OVERRIDE: True},
+        _quarter_refresh_pending=True,
         _manual_mode=None,
         _controlled_samples=0,
         _grid_samples=1,
@@ -1715,6 +1901,7 @@ def test_control_error_disables_planner_override():
 
     assert coordinator.settings[SET_CONTROL_ENABLED] is False
     assert coordinator.settings[SET_PLANNER_OVERRIDE] is False
+    assert coordinator._quarter_refresh_pending is False
     coordinator._async_release.assert_awaited_once()
 
 
@@ -1859,6 +2046,101 @@ def test_diagnostic_planning_runs_every_five_minutes(monkeypatch):
         NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
         await coordinator._quarter_task
         assert run.await_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_enabling_planner_requests_immediate_recalculation(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def scenario():
+        run = AsyncMock()
+        now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
+        coordinator = SimpleNamespace(
+            settings={SET_PLANNER_OVERRIDE: False},
+            _grid_samples=10,
+            _quarter_task=None,
+            _quarter_last_start=950.0,
+            _quarter_status="experimental",
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+
+        async def refresh():
+            NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+
+        coordinator.async_refresh = refresh
+        await NexusCoordinator.async_set_planner_override(coordinator, True)
+        assert coordinator._quarter_task is not None
+        await coordinator._quarter_task
+        assert run.await_count == 1
+        assert coordinator._quarter_last_start == 1000.0
+
+        clock[0] += 299
+        await refresh()
+        assert run.await_count == 1
+        clock[0] += 1
+        await refresh()
+        await coordinator._quarter_task
+        assert run.await_count == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("disable_before_completion", [False, True])
+def test_enable_during_planning_queues_one_fresh_run(disable_before_completion):
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        rerun_started = asyncio.Event()
+        calls = []
+        refresh_count = 0
+        now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
+
+        async def run(data, moment, limits):
+            calls.append(data["generation"])
+            if len(calls) == 1:
+                started.set()
+                await release.wait()
+            else:
+                rerun_started.set()
+
+        coordinator = SimpleNamespace(
+            settings={SET_PLANNER_OVERRIDE: False},
+            _grid_samples=10,
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="experimental",
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+
+        async def refresh():
+            nonlocal refresh_count
+            refresh_count += 1
+            NexusCoordinator._schedule_experimental_quarter_plan(
+                coordinator, {"generation": refresh_count}, now, (5000, 5000)
+            )
+
+        coordinator.async_refresh = refresh
+        await refresh()
+        first_task = coordinator._quarter_task
+        await started.wait()
+        await NexusCoordinator.async_set_planner_override(coordinator, True)
+        assert coordinator._quarter_task is first_task
+        assert calls == [1]
+        if disable_before_completion:
+            await NexusCoordinator.async_set_planner_override(coordinator, False)
+        release.set()
+        await first_task
+        if disable_before_completion:
+            await asyncio.sleep(0)
+            assert calls == [1]
+        else:
+            await asyncio.wait_for(rerun_started.wait(), timeout=2)
+            await coordinator._quarter_task
+            assert calls == [1, 3]
 
     asyncio.run(scenario())
 

@@ -191,8 +191,10 @@ def plan_quarters(
     """Optimize complete, nonoverlapping grid cycles with estimated efficiency.
 
     Each cycle has contiguous charge and discharge blocks and returns to the
-    starting SOC. Existing inventory can be discharged across a bounded set of levels
-    between subsequent cycles. Solar surplus is valued at the forgone export price.
+    starting SOC. If starting below the minimum, the first cycle replenishes the
+    deficit and ends at the minimum. Existing inventory can be discharged across a
+    bounded set of levels between subsequent cycles. Solar surplus is valued at the
+    forgone export price.
     """
     numbers = (
         *prices,
@@ -213,7 +215,8 @@ def plan_quarters(
     if (
         not all(math.isfinite(value) for value in numbers)
         or capacity_kwh <= 0
-        or not 0 <= min_soc_pct <= initial_soc_pct <= 100
+        or not 0 <= min_soc_pct <= 100
+        or not 0 <= initial_soc_pct <= 100
         or max_power_w <= 0
         or not 0 < efficiency <= 1
         or min_profit_eur_per_kwh < 0
@@ -246,13 +249,16 @@ def plan_quarters(
     input_per_slot = max_power_w / 4000
     if not count:
         return QuarterPlan((0.0,) * count, (initial_soc_pct,) * count, 0.0)
-    available = capacity_kwh * (initial_soc_pct - min_soc_pct) / 100
+    deficit = capacity_kwh * max(0.0, min_soc_pct - initial_soc_pct) / 100
+    available = capacity_kwh * max(0.0, initial_soc_pct - min_soc_pct) / 100
     max_discharge_efficiency = (
         inverter_efficiency(max_power_w) if use_power_efficiency else efficiency
     )
     efficiency_floor = 0.85 if use_power_efficiency else efficiency
     inventory_step = max(available / 10, input_per_slot / max_discharge_efficiency)
     levels = [0.0]
+    if deficit > 0:
+        levels.append(-deficit)
     if initial_value_eur_per_kwh is not None and available > 0:
         levels.extend(
             min(available, inventory_step * index)
@@ -479,11 +485,11 @@ def plan_quarters(
     for end in range(1, count + 1):
         for state, headroom in enumerate(headrooms):
             best[state][end] = best[state][end - 1]
-            if headroom <= 0:
+            if headroom <= 0 or (deficit > 0 and state == 0):
                 continue
             max_blocks = min(
                 count,
-                math.ceil(headroom / (input_per_slot * efficiency_floor))
+                math.ceil((headroom + deficit) / (input_per_slot * efficiency_floor))
                 + int(durations_hours is not None and any(duration < 0.25 for duration in hours)),
             )
             for sell_count in range(1, min(max_blocks, end - 1) + 1):
@@ -494,70 +500,92 @@ def plan_quarters(
                 for buy_end in range(1, sell_start + 1):
                     for buy_count in range(1, min(max_blocks, buy_end) + 1):
                         buy_start = buy_end - buy_count
-                        stored = min(
-                            headroom,
-                            charge_cell_prefix[buy_end] - charge_cell_prefix[buy_start],
-                            discharge_cell_energy(sell_start, end, max_sale_power),
-                        )
-                        discharge_w = discharge_power(sell_start, end, stored)
-                        charge_w = charge_power(buy_start, buy_end, stored)
-                        sold = discharge_w * (hour_prefix[end] - hour_prefix[sell_start]) / 1000
-                        bought = charge_w * (hour_prefix[buy_end] - hour_prefix[buy_start]) / 1000
-                        gain = (
-                            sale_price(sell_start, end, discharge_w) * sold
-                            - purchase_price(buy_start, buy_end, charge_w) * bought
-                        )
-                        margin = gain / sold
-                        if margin + 1e-12 >= min_profit_eur_per_kwh:
-                            profit = best[state][buy_start] + gain
-                            if profit > best[state][end] + 1e-12:
-                                best[state][end] = profit
+                        predecessors = [(state, 0.0)]
+                        if deficit > 0 and state == 1:
+                            predecessors.append((0, deficit))
+                        for previous_state, recovery in predecessors:
+                            if best[previous_state][buy_start] == -math.inf:
+                                continue
+                            stored = min(
+                                headroom,
+                                charge_cell_prefix[buy_end] - charge_cell_prefix[buy_start]
+                                - recovery,
+                                discharge_cell_energy(sell_start, end, max_sale_power),
+                            )
+                            if stored > 1e-12:
+                                discharge_w = discharge_power(sell_start, end, stored)
+                                charge_w = charge_power(buy_start, buy_end, stored + recovery)
+                                sold = (
+                                    discharge_w
+                                    * (hour_prefix[end] - hour_prefix[sell_start])
+                                    / 1000
+                                )
+                                bought = (
+                                    charge_w
+                                    * (hour_prefix[buy_end] - hour_prefix[buy_start])
+                                    / 1000
+                                )
+                                gain = (
+                                    sale_price(sell_start, end, discharge_w) * sold
+                                    - purchase_price(buy_start, buy_end, charge_w) * bought
+                                )
+                                if gain / sold + 1e-12 >= min_profit_eur_per_kwh:
+                                    profit = best[previous_state][buy_start] + gain
+                                    if profit > best[state][end] + 1e-12:
+                                        best[state][end] = profit
+                                        choices[state][end] = (
+                                            "cycle",
+                                            buy_start,
+                                            buy_end,
+                                            sell_start,
+                                            stored,
+                                            charge_w,
+                                            discharge_w,
+                                            previous_state,
+                                        )
+                            solar_energy = solar_prefix[buy_end] - solar_prefix[buy_start]
+                            if solar_energy <= 0:
+                                continue
+                            solar_stored = min(
+                                headroom,
+                                solar_cell_prefix[buy_end]
+                                - solar_cell_prefix[buy_start]
+                                - recovery,
+                                discharge_cell_energy(sell_start, end, max_sale_power),
+                            )
+                            if solar_stored <= 1e-12:
+                                continue
+                            solar_discharge = discharge_power(sell_start, end, solar_stored)
+                            fraction = solar_fraction(buy_start, buy_end, solar_stored + recovery)
+                            solar_sold = (
+                                solar_discharge
+                                * (hour_prefix[end] - hour_prefix[sell_start])
+                                / 1000
+                            )
+                            solar_purchase = (
+                                solar_cost_prefix[buy_end] - solar_cost_prefix[buy_start]
+                            ) / solar_energy
+                            solar_gain = (
+                                sale_price(sell_start, end, solar_discharge) * solar_sold
+                                - solar_purchase * solar_energy * fraction
+                            )
+                            if solar_gain / solar_sold + 1e-12 < min_profit_eur_per_kwh:
+                                continue
+                            solar_profit = best[previous_state][buy_start] + solar_gain
+                            if solar_profit > best[state][end] + 1e-12:
+                                best[state][end] = solar_profit
                                 choices[state][end] = (
-                                    "cycle",
+                                    "solar_cycle",
                                     buy_start,
                                     buy_end,
                                     sell_start,
-                                    stored,
-                                    charge_w,
-                                    discharge_w,
+                                    solar_stored,
+                                    fraction,
+                                    solar_discharge,
+                                    previous_state,
                                 )
-                        solar_energy = solar_prefix[buy_end] - solar_prefix[buy_start]
-                        if solar_energy <= 0:
-                            continue
-                        solar_stored = min(
-                            headroom,
-                            solar_cell_prefix[buy_end] - solar_cell_prefix[buy_start],
-                            discharge_cell_energy(sell_start, end, max_sale_power),
-                        )
-                        solar_discharge = discharge_power(sell_start, end, solar_stored)
-                        fraction = solar_fraction(buy_start, buy_end, solar_stored)
-                        solar_sold = (
-                            solar_discharge * (hour_prefix[end] - hour_prefix[sell_start]) / 1000
-                        )
-                        solar_purchase = (
-                            solar_cost_prefix[buy_end] - solar_cost_prefix[buy_start]
-                        ) / solar_energy
-                        solar_gain = (
-                            sale_price(sell_start, end, solar_discharge) * solar_sold
-                            - solar_purchase * solar_energy * fraction
-                        )
-                        solar_margin = solar_gain / solar_sold
-                        if solar_margin + 1e-12 < min_profit_eur_per_kwh:
-                            continue
-                        solar_profit = best[state][buy_start] + solar_gain
-                        if solar_profit > best[state][end] + 1e-12:
-                            best[state][end] = solar_profit
-                            choices[state][end] = (
-                                "solar_cycle",
-                                buy_start,
-                                buy_end,
-                                sell_start,
-                                solar_stored,
-                                fraction,
-                                solar_discharge,
-                            )
 
-        if initial_value_eur_per_kwh is not None:
+        if initial_value_eur_per_kwh is not None and deficit == 0:
             for state, level in enumerate(levels[1:], start=1):
                 for previous_state in range(state):
                     stored = level - levels[previous_state]
@@ -610,7 +638,16 @@ def plan_quarters(
             cursor = sell_start
             state = previous_state
             continue
-        _, buy_start, buy_end, sell_start, stored, charge_parameter, discharge_w = choice
+        (
+            _,
+            buy_start,
+            buy_end,
+            sell_start,
+            stored,
+            charge_parameter,
+            discharge_w,
+            previous_state,
+        ) = choice
         if choice[0] == "solar_cycle":
             fraction = charge_parameter
             for index in range(buy_start, buy_end):
@@ -625,6 +662,7 @@ def plan_quarters(
         for index in range(sell_start, cursor):
             powers[index] = discharge_w
         cursor = buy_start
+        state = previous_state
 
     stored_kwh = capacity_kwh * initial_soc_pct / 100
     soc = []
