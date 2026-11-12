@@ -33,6 +33,7 @@ from custom_components.nexus_controller.powersave import (
     decide_powersave,
     schedule_window,
 )
+from custom_components.nexus_controller.sensor import SENSORS, NexusInputSensor
 
 
 def decision(**overrides):
@@ -239,6 +240,43 @@ def test_powersave_does_not_use_future_plan_with_outdated_earnings(monkeypatch):
 
     assert asyncio.run(step()) is True
     coordinator.hass.services.async_call.assert_not_awaited()
+
+
+def test_powersave_status_exposes_current_state_and_timing(monkeypatch):
+    coordinator, _, _, step = integration_coordinator(monkeypatch)
+    now = datetime(2026, 11, 12, 12, tzinfo=UTC)
+    coordinator._powersave_memory = PowerSaveMemory(1000, 1900, 1400, 1950)
+    coordinator.experimental_quarter_plan["slots"][2]["power_w"] = 1000
+
+    assert asyncio.run(step()) is False
+    details = coordinator.powersave_details
+    assert details["inverter_power"] == "on"
+    assert details["requested_power"] == "on"
+    assert details["inverter_on_since"] == (now - timedelta(seconds=50)).isoformat()
+    assert details["cooldown_until"] == (now + timedelta(seconds=800)).isoformat()
+    assert details["control_ready_at"] == (now + timedelta(seconds=10)).isoformat()
+    assert details["next_planned_work_at"] == (now + timedelta(minutes=30)).isoformat()
+    assert details["planned_wake_at"] == (now + timedelta(minutes=24, seconds=50)).isoformat()
+    assert details["maintenance_start_at"] == (now + timedelta(seconds=83990)).isoformat()
+
+    coordinator.entry = SimpleNamespace(entry_id="test")
+    description = next(item for item in SENSORS if item.config_key == "powersave_status")
+    sensor = NexusInputSensor(coordinator, description)
+    assert sensor.extra_state_attributes == details
+    coordinator.hass.services.async_call.assert_not_awaited()
+
+
+def test_powersave_timing_does_not_invent_work_when_plan_is_invalid(monkeypatch):
+    coordinator, _, _, step = integration_coordinator(monkeypatch, inverter="off")
+    coordinator._planner_action = lambda *args: DispatchPlan(
+        "idle", 0, "planner_unavailable_or_stale"
+    )
+
+    assert asyncio.run(step()) is False
+    assert coordinator.powersave_details["inverter_power"] == "off"
+    assert coordinator.powersave_details["requested_power"] == "on"
+    assert coordinator.powersave_details["next_planned_work_at"] is None
+    assert coordinator.powersave_details["planned_wake_at"] is None
 
 
 def test_integration_wakes_on_low_soc_and_waits_for_confirmed_power_and_warmup(monkeypatch):

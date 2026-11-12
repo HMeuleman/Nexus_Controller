@@ -116,6 +116,7 @@ PHASE_SETTLE_S = 0.5
 GAIN_REFERENCE_INTERVAL_S = 10.0
 HOLD_POWER_W = 50.0
 EXPERIMENTAL_PLAN_INTERVAL_S = 300.0
+EXPERIMENTAL_PLAN_RETRY_S = 30.0
 EXPERIMENTAL_PLAN_MAX_AGE_S = EXPERIMENTAL_PLAN_INTERVAL_S + 60.0
 
 
@@ -142,6 +143,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._quarter_task: asyncio.Task | None = None
         self._quarter_last_start: float | None = None
         self._quarter_refresh_pending = False
+        self._planner_startup_ready = False
         self._quarter_status = "unavailable"
         self.settings: dict[str, float | bool] = self._initial_settings()
         self.tracker = BatteryTracker(BATTERY_CAPACITY_KWH)
@@ -154,6 +156,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._powersave_memory = PowerSaveMemory(started, started, started)
         self._powersave_saved_maintenance = started
         self._powersave_wake_pending = False
+        self.powersave_details: dict[str, float | str | bool | None] = {}
         self._lock = asyncio.Lock()
         self._grid_samples = 0
         self._controlled_samples = 0
@@ -255,6 +258,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         await self._store.async_save(self.tracker.as_dict())
         await super().async_shutdown()
 
+    async def async_start_planning(self) -> None:
+        """Start planning after the settings entities have been restored."""
+        self._planner_startup_ready = True
+        self._quarter_refresh_pending = True
+        await self.async_refresh()
+
     @callback
     def _on_grid_event(self, event: Event) -> None:
         """Note a new grid sample and, when controlling, schedule a prompt control step."""
@@ -300,7 +309,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
     def set_setting(self, key: str, value: float | bool) -> None:
         """Change a runtime setting (called by the number and switch entities)."""
-        if key == SET_MIN_EARNINGS and self.settings.get(key) != value:
+        if key in (
+            SET_MIN_DISCHARGE_SOC,
+            SET_MIN_EARNINGS,
+            SET_EXPORT_INCLUDES_TAX,
+            SET_TAX,
+            SET_RESERVED_ROOM,
+        ) and self.settings.get(key) != value:
             self._quarter_refresh_pending = True
         self.settings[key] = value
 
@@ -465,13 +480,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     ) -> None:
         """Schedule diagnostic planning without delaying battery control."""
         data["experimental_quarter_plan"] = self._quarter_status
+        if not getattr(self, "_planner_startup_ready", True):
+            return
         started = time.monotonic()
         if self._quarter_task is not None and not self._quarter_task.done():
             return
         if (
             not getattr(self, "_quarter_refresh_pending", False)
             and self._quarter_last_start is not None
-            and started - self._quarter_last_start < EXPERIMENTAL_PLAN_INTERVAL_S
+            and started - self._quarter_last_start
+            < (
+                EXPERIMENTAL_PLAN_INTERVAL_S
+                if self._quarter_status == "experimental"
+                else EXPERIMENTAL_PLAN_RETRY_S
+            )
         ):
             return
         self._quarter_refresh_pending = False
@@ -499,10 +521,14 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             self.experimental_quarter_plan = {}
             self._quarter_status = "unavailable"
             _LOGGER.exception("Experimental quarter plan failed")
-            return
-        self._quarter_status = str(data.get("experimental_quarter_plan", "unavailable"))
-        if self._quarter_status != "experimental":
-            self.experimental_quarter_plan = {}
+        else:
+            self._quarter_status = str(data.get("experimental_quarter_plan", "unavailable"))
+            if self._quarter_status != "experimental":
+                self.experimental_quarter_plan = {}
+        if getattr(self, "data", None) is not None and getattr(self, "last_update_success", True):
+            self.async_set_updated_data(
+                {**self.data, "experimental_quarter_plan": self._quarter_status}
+            )
 
     async def _async_experimental_quarter_plan(
         self,
@@ -1120,6 +1146,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         entity_id = self.configured_entity_id(CONF_INVERTER_POWER)
         if not entity_id:
             data["powersave_status"] = "not_configured"
+            self.powersave_details = {"configured": False}
             return True
         state = self.hass.states.get(entity_id)
         inverter_on = (
@@ -1171,6 +1198,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             )
         except (KeyError, TypeError, ValueError, OverflowError):
             data["powersave_status"] = "invalid_settings_or_clock"
+            self.powersave_details = {"configured": True, "enabled": enabled}
             if enabled or self._powersave_wake_pending:
                 await self._async_set_inverter_power(True)
             return False
@@ -1191,6 +1219,43 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         self._powersave_memory = decision.memory
         data["powersave_status"] = decision.reason
+        self.powersave_details = {
+            "configured": True,
+            "enabled": enabled,
+            "inverter_power": (
+                "on" if inverter_on is True else "off" if inverter_on is False else "unknown"
+            ),
+            "requested_power": decision.power if enabled or self._powersave_wake_pending else None,
+            "measurements_fresh": readings_fresh,
+        }
+        if decision.reason != "invalid_settings_or_clock":
+            def at(value: float | None) -> str | None:
+                if value is None or not math.isfinite(value):
+                    return None
+                try:
+                    return (now + timedelta(seconds=value - now_s)).isoformat()
+                except OverflowError:
+                    return None
+
+            self.powersave_details.update(
+                inverter_on_since=at(decision.memory.on_since_s),
+                cooldown_until=at(
+                    max(decision.memory.started_s, decision.memory.last_activity_s)
+                    + settings.cooldown_s
+                ),
+                control_ready_at=at(
+                    decision.memory.on_since_s + settings.warmup_s
+                    if decision.memory.on_since_s is not None
+                    else None
+                ),
+                next_planned_work_at=at(next_work),
+                planned_wake_at=at(next_work - settings.lead_s if next_work is not None else None),
+                maintenance_start_at=at(
+                    decision.memory.maintenance_s
+                    + settings.maintenance_interval_s
+                    - settings.maintenance_duration_s
+                ),
+            )
         if decision.memory.maintenance_s - self._powersave_saved_maintenance >= 60:
             self._powersave_saved_maintenance = decision.memory.maintenance_s
             self._powersave_store.async_delay_save(self._powersave_data, 60)

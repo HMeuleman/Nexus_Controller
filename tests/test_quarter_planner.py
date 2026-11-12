@@ -4,11 +4,12 @@ import asyncio
 import random
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.helpers.restore_state import RestoreEntity
 
+import custom_components.nexus_controller as integration_module
 from custom_components.nexus_controller import actuator as actuator_module
 from custom_components.nexus_controller import coordinator as coordinator_module
 from custom_components.nexus_controller.charging import inverter_efficiency
@@ -29,6 +30,7 @@ from custom_components.nexus_controller.const import (
     SET_MIN_DISCHARGE_SOC,
     SET_MIN_EARNINGS,
     SET_PLANNER_OVERRIDE,
+    SET_RESERVED_ROOM,
     SET_TAX,
     SETTING_DEFAULTS,
 )
@@ -996,6 +998,17 @@ def test_current_interval_uses_remaining_time_and_rejects_gaps():
     )
 
 
+def test_future_only_forecast_can_still_generate_a_plan():
+    now = datetime(2026, 11, 12, 12, 5, tzinfo=UTC)
+    start = now.replace(minute=15)
+    forecast = [(start, 0.20), (start + timedelta(minutes=15), 0.60)]
+
+    assert forecast_quarters_with_current(forecast, now) == [
+        (start, 0.20, 0.25),
+        (start + timedelta(minutes=15), 0.60, 0.25),
+    ]
+
+
 def test_diagnostic_plan_is_read_only_and_exposes_quarters():
     now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
     start = now.replace(minute=15)
@@ -1214,6 +1227,25 @@ def test_changing_earnings_requests_immediate_refresh_without_enabling_control()
     asyncio.run(entity.async_set_native_value(0.12))
     assert coordinator._quarter_refresh_pending is False
     coordinator.async_refresh.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        (SET_MIN_DISCHARGE_SOC, 11.0),
+        (SET_MIN_EARNINGS, 0.12),
+        (SET_EXPORT_INCLUDES_TAX, True),
+        (SET_TAX, 0.12),
+        (SET_RESERVED_ROOM, 900.0),
+    ],
+)
+def test_restored_planner_settings_request_a_fresh_plan(key, value):
+    coordinator = SimpleNamespace(settings=dict(SETTING_DEFAULTS), _quarter_refresh_pending=False)
+
+    NexusCoordinator.set_setting(coordinator, key, value)
+
+    assert coordinator.settings[key] == value
+    assert coordinator._quarter_refresh_pending is True
 
 
 @pytest.mark.parametrize(
@@ -2186,6 +2218,7 @@ def test_diagnostic_planning_runs_every_five_minutes(monkeypatch):
         NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
         await coordinator._quarter_task
 
+        coordinator._quarter_status = "experimental"
         clock[0] += 299
         NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
         assert run.await_count == 1
@@ -2194,6 +2227,156 @@ def test_diagnostic_planning_runs_every_five_minutes(monkeypatch):
         NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
         await coordinator._quarter_task
         assert run.await_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_unavailable_startup_plan_retries_before_five_minutes(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def scenario():
+        run = AsyncMock()
+        coordinator = SimpleNamespace(
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="unavailable",
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+        now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        await coordinator._quarter_task
+
+        clock[0] += 29
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        assert run.await_count == 1
+        clock[0] += 1
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, {}, now, (5000, 5000))
+        await coordinator._quarter_task
+        assert run.await_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_initial_planning_waits_for_restored_settings():
+    async def scenario():
+        run = AsyncMock()
+        now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+        coordinator = SimpleNamespace(
+            settings={SET_CONTROL_ENABLED: False, SET_MIN_EARNINGS: 0.20},
+            _planner_startup_ready=False,
+            _quarter_refresh_pending=False,
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="unavailable",
+            _async_run_experimental_quarter_plan=run,
+            hass=SimpleNamespace(async_create_task=asyncio.create_task),
+        )
+
+        async def refresh():
+            NexusCoordinator._schedule_experimental_quarter_plan(
+                coordinator, {"earnings": coordinator.settings[SET_MIN_EARNINGS]}, now, (5000, 5000)
+            )
+
+        coordinator.async_refresh = refresh
+        await refresh()
+        assert coordinator._quarter_task is None
+        NexusCoordinator.set_setting(coordinator, SET_MIN_EARNINGS, 0.12)
+        await NexusCoordinator.async_start_planning(coordinator)
+        await coordinator._quarter_task
+
+        assert run.await_args.args[0]["earnings"] == 0.12
+        assert coordinator.settings[SET_CONTROL_ENABLED] is False
+
+    asyncio.run(scenario())
+
+
+def test_integration_starts_planning_after_entity_setup(monkeypatch):
+    events = []
+
+    async def setup():
+        events.append("coordinator_setup")
+
+    async def first_refresh():
+        events.append("first_refresh")
+
+    async def forward(entry, platforms):
+        events.append("restore_entities")
+
+    async def start():
+        events.append("start_planning")
+
+    coordinator = SimpleNamespace(
+        async_setup=setup,
+        async_config_entry_first_refresh=first_refresh,
+        async_start_planning=start,
+    )
+    monkeypatch.setattr(integration_module, "NexusCoordinator", lambda hass, entry: coordinator)
+    hass = SimpleNamespace(
+        data={}, config_entries=SimpleNamespace(async_forward_entry_setups=forward)
+    )
+    entry = SimpleNamespace(
+        entry_id="test", async_on_unload=MagicMock(), add_update_listener=MagicMock()
+    )
+
+    assert asyncio.run(integration_module.async_setup_entry(hass, entry)) is True
+    assert events == ["coordinator_setup", "first_refresh", "restore_entities", "start_planning"]
+
+
+def test_startup_plan_recovers_after_forecast_becomes_available(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(coordinator_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def executor(function):
+        return function()
+
+    async def scenario():
+        start = datetime(2026, 11, 12, 12, tzinfo=UTC)
+        now = start + timedelta(minutes=5)
+        coordinator = SimpleNamespace(
+            price_forecast=[],
+            price_forecast_taxes={},
+            settings={
+                SET_MIN_DISCHARGE_SOC: 10,
+                SET_MIN_EARNINGS: 0.15,
+                SET_EXPORT_INCLUDES_TAX: True,
+            },
+            tracker=SimpleNamespace(
+                state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)
+            ),
+            hass=SimpleNamespace(
+                async_create_task=asyncio.create_task, async_add_executor_job=executor
+            ),
+            _experimental_solar_quarters=lambda moment: {},
+            experimental_quarter_plan={},
+            _quarter_task=None,
+            _quarter_last_start=None,
+            _quarter_status="unavailable",
+        )
+        coordinator._async_experimental_quarter_plan = lambda data, moment, limits: (
+            NexusCoordinator._async_experimental_quarter_plan(coordinator, data, moment, limits)
+        )
+        coordinator._async_run_experimental_quarter_plan = lambda data, moment, limits: (
+            NexusCoordinator._async_run_experimental_quarter_plan(coordinator, data, moment, limits)
+        )
+        data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.0}
+        NexusCoordinator._schedule_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+        await coordinator._quarter_task
+        assert coordinator._quarter_status == "unavailable"
+
+        coordinator.price_forecast = [
+            (start, 0.40),
+            (start + timedelta(minutes=15), 0.20),
+            (start + timedelta(minutes=30), 0.80),
+        ]
+        clock[0] += 30
+        NexusCoordinator._schedule_experimental_quarter_plan(
+            coordinator, data, now + timedelta(seconds=30), (10000, 10000)
+        )
+        await coordinator._quarter_task
+        assert coordinator._quarter_status == "experimental"
+        assert len(coordinator.experimental_quarter_plan["slots"]) == 3
 
     asyncio.run(scenario())
 
@@ -2366,6 +2549,49 @@ def test_diagnostic_background_failure_is_fail_closed():
 
     assert coordinator.experimental_quarter_plan == {}
     assert coordinator._quarter_status == "unavailable"
+
+
+def test_background_plan_immediately_publishes_its_status():
+    async def calculate(data, now, limits):
+        data["experimental_quarter_plan"] = "experimental"
+
+    coordinator = SimpleNamespace(
+        experimental_quarter_plan={"slots": []},
+        _quarter_status="unavailable",
+        _async_experimental_quarter_plan=calculate,
+        data={"experimental_quarter_plan": "unavailable", "control_status": "disabled"},
+        async_set_updated_data=MagicMock(),
+    )
+    asyncio.run(
+        NexusCoordinator._async_run_experimental_quarter_plan(
+            coordinator, {}, datetime(2026, 11, 12, tzinfo=UTC), (5000, 5000)
+        )
+    )
+
+    coordinator.async_set_updated_data.assert_called_once_with(
+        {"experimental_quarter_plan": "experimental", "control_status": "disabled"}
+    )
+
+
+def test_background_plan_does_not_mask_failed_coordinator_refresh():
+    async def calculate(data, now, limits):
+        data["experimental_quarter_plan"] = "experimental"
+
+    coordinator = SimpleNamespace(
+        experimental_quarter_plan={"slots": []},
+        _quarter_status="unavailable",
+        _async_experimental_quarter_plan=calculate,
+        data={"experimental_quarter_plan": "unavailable"},
+        last_update_success=False,
+        async_set_updated_data=MagicMock(),
+    )
+    asyncio.run(
+        NexusCoordinator._async_run_experimental_quarter_plan(
+            coordinator, {}, datetime(2026, 11, 12, tzinfo=UTC), (5000, 5000)
+        )
+    )
+
+    coordinator.async_set_updated_data.assert_not_called()
 
 
 def test_diagnostic_keeps_previous_plan_while_recalculation_is_running():

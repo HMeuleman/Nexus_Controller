@@ -56,7 +56,17 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
     """Expose the latest numeric value from a configured input entity."""
 
     entity_description: NexusSensorDescription
-    _unrecorded_attributes = frozenset({"slots"})
+    _unrecorded_attributes = frozenset(
+        {
+            "slots",
+            "inverter_on_since",
+            "cooldown_until",
+            "control_ready_at",
+            "next_planned_work_at",
+            "planned_wake_at",
+            "maintenance_start_at",
+        }
+    )
 
     def __init__(
         self,
@@ -86,9 +96,11 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        """Expose the plan only on its diagnostic entity."""
+        """Expose planner and powersave details on their diagnostic entities."""
         if self.entity_description.config_key == "experimental_quarter_plan":
             return self.coordinator.experimental_quarter_plan
+        if self.entity_description.config_key == "powersave_status":
+            return self.coordinator.powersave_details
         return None
 
     @callback
