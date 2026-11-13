@@ -166,6 +166,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._actuator: BatteryActuator | None = None
         self._control_was_on = False
         self._control_status = "disabled"
+        self._last_planner_input_warning_signature: tuple | None = None
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._settle_cancel: CALLBACK_TYPE | None = None
         self._last_time: datetime | None = None
@@ -974,6 +975,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     data, dt_util.utcnow(), phases, battery_power, limits
                 )
             if watchdog_plan is None or watchdog_plan.mode != "idle":
+                previous_data = getattr(self, "data", None)
+                if self._control_was_on and isinstance(previous_data, dict):
+                    data["control_mode"] = previous_data.get("control_mode", "idle")
+                    data["control_power"] = previous_data.get("control_power", 0.0)
                 data["control_status"] = self._control_status
                 return
         self._controlled_samples = self._grid_samples
@@ -1021,6 +1026,14 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             self._pid_memory = PIDMemory()
             if plan.mode == "idle":
                 status = plan.reason
+
+        if status == "planned_inputs_unavailable":
+            log_failure = getattr(self, "_log_planner_input_failure", None)
+            if log_failure is not None:
+                log_failure(dt_util.utcnow(), data, phases, battery_power, limits)
+        else:
+            if hasattr(self, "_last_planner_input_warning_signature"):
+                self._last_planner_input_warning_signature = None
 
         try:
             actuator = self._get_actuator()
@@ -1165,7 +1178,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         now_s = time.monotonic()
         window = None
-        ages = self._planner_measurement_ages(now) if enabled else None
+        ages = self._planner_measurement_ages(now)
         interval = self.sample_estimator.interval_s
         max_measurement_age = (
             max(30.0, interval * 3) if math.isfinite(interval) and interval > 0 else None
@@ -1287,6 +1300,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             and decision.reason == "measurements_unavailable"
             and getattr(self, "_powersave_owns_off", False)
         ):
+            measurements = self.powersave_details.get("measurements", {})
+            failed_measurements = {
+                key: details
+                for key, details in measurements.items()
+                if not details.get("fresh", False)
+            }
+            _LOGGER.error(
+                "Powersave measurement lockout: inverter was off under Nexus control; "
+                "max_age_s=%s failed_measurements=%s soc_pct=%r battery_power_w=%r",
+                max_measurement_age,
+                failed_measurements or "none reported; inspect measurement values",
+                data.get(CONF_BATTERY_SOC),
+                battery_power,
+            )
             self.settings[SET_POWERSAVE_ENABLED] = False
             self._powersave_wake_pending = True
             self._powersave_owns_off = False
@@ -1355,6 +1382,41 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 ),
             }
         return details
+
+    def _log_planner_input_failure(
+        self,
+        now: datetime,
+        data: dict[str, float | str | None],
+        phases: tuple,
+        battery_power: float | None,
+        limits: tuple[float | None, float | None],
+    ) -> None:
+        """Log the measurement snapshot once per distinct planner-input failure."""
+        interval = self.sample_estimator.interval_s
+        max_age_s = max(30.0, interval * 3) if math.isfinite(interval) and interval > 0 else None
+        measurements = self._planner_measurement_diagnostics(now, max_age_s)
+        failed = {
+            key: details for key, details in measurements.items() if not details["fresh"]
+        }
+        signature = tuple(
+            (key, str(details["state"])) for key, details in failed.items()
+        ) or (("planner_values", "unavailable_or_invalid"),)
+        if signature == self._last_planner_input_warning_signature:
+            return
+        self._last_planner_input_warning_signature = signature
+        _LOGGER.warning(
+            "Quarter-plan inputs unavailable; max_age_s=%s failed_measurements=%s "
+            "dispatch_values=%s",
+            max_age_s,
+            failed or "none; one or more planner values or slot fields are invalid",
+            {
+                "phases_w": phases,
+                "soc_pct": data.get(CONF_BATTERY_SOC),
+                "battery_power_w": battery_power,
+                "pv_power_w": data.get(PV_POWER_ENTITIES[0]),
+                "limits_w": limits,
+            },
+        )
 
     def _planner_measurement_ages(self, now: datetime) -> tuple[float, ...] | None:
         """Return ages of the configured phase, SOC and battery power reports."""

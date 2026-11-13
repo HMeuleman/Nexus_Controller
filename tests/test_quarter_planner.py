@@ -1995,12 +1995,14 @@ def test_planner_watchdog_does_not_rewrite_a_valid_command_without_new_sample():
         sample_estimator=SimpleNamespace(interval_s=10),
         _planner_action=lambda *args: DispatchPlan("discharge", 500, "planned_export"),
         _get_actuator=lambda: actuator,
+        data={"control_mode": "discharge", "control_power": 500.0},
     )
+    data = {}
 
     asyncio.run(
         NexusCoordinator._async_control(
             coordinator,
-            {},
+            data,
             DispatchPlan("idle", 0, "no_dispatch_condition"),
             (100.0, 100.0, 100.0),
             0.0,
@@ -2009,6 +2011,8 @@ def test_planner_watchdog_does_not_rewrite_a_valid_command_without_new_sample():
     )
 
     actuator.async_apply.assert_not_awaited()
+    assert data["control_mode"] == "discharge"
+    assert data["control_power"] == 500.0
 
 
 def test_offline_override_chain_stops_when_measurements_become_stale(monkeypatch):

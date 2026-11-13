@@ -72,7 +72,7 @@ Controls: **Battery control enabled**, **Planner**, **Inverter powersave**, **Ma
 
 Tracked values you can overwrite: **Battery earned total**, **Battery cycles total**, **Value of stored energy**.
 
-Diagnostics: tax-free price, tax used, price from which the battery covers house load, battery cycles today, earned today, detected grid sample interval, average daytime house load, expected solar surplus, safe charge/discharge power limits, price forecast statistics, the shadow proposal (mode, power, reason) and the control mode, power and status.
+Diagnostics: tax-free price, tax used, price from which the battery covers house load, battery cycles today, earned today, detected grid sample interval, average daytime house load, expected solar surplus, safe charge/discharge power limits, price forecast statistics, the shadow proposal (mode, power, reason) and the control mode, power and status. Planner input failures and powersave measurement lockouts include per-entity state and report age in the Home Assistant logs.
 
 ## How the algorithm works
 

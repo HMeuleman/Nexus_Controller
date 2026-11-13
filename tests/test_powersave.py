@@ -1,6 +1,7 @@
 """Offline safety scenarios for inverter powersave."""
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -354,8 +355,9 @@ def test_integration_does_not_power_cycle_when_measurements_recover(monkeypatch)
     )
 
 
-def test_missing_measurements_after_controller_shutdown_disable_powersave(monkeypatch):
+def test_missing_measurements_after_controller_shutdown_disable_powersave(monkeypatch, caplog):
     coordinator, states, clock, step = integration_coordinator(monkeypatch)
+    caplog.set_level(logging.ERROR, logger=coordinator_module.__name__)
     assert asyncio.run(step()) is False
     assert coordinator.hass.services.async_call.await_args.args[:2] == ("switch", "turn_off")
 
@@ -368,6 +370,8 @@ def test_missing_measurements_after_controller_shutdown_disable_powersave(monkey
     assert coordinator._powersave_wake_pending is True
     assert coordinator.last_step_data["powersave_status"] == "measurements_lockout"
     assert coordinator.powersave_details["measurement_lockout"] is True
+    assert "Powersave measurement lockout" in caplog.text
+    assert CONF_BATTERY_POWER in caplog.text
 
     states["switch.inverter"].state = "on"
     clock[0] += 1
@@ -434,6 +438,45 @@ def test_measurement_diagnostics_identify_stale_and_unavailable_inputs():
     assert details[CONF_BATTERY_POWER]["fresh"] is False
 
 
+def test_planner_input_warning_names_stale_measurement(caplog):
+    now = datetime(2026, 11, 12, 21, 0, tzinfo=UTC)
+    keys = (
+        CONF_GRID_POWER_L1,
+        CONF_GRID_POWER_L2,
+        CONF_GRID_POWER_L3,
+        CONF_BATTERY_SOC,
+        CONF_BATTERY_POWER,
+    )
+    states = {
+        key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
+    }
+    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=45)
+    coordinator = SimpleNamespace(
+        configured_entity_id=lambda key: key,
+        hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
+        sample_estimator=SimpleNamespace(interval_s=10.0),
+        _last_planner_input_warning_signature=None,
+    )
+    coordinator._planner_measurement_diagnostics = lambda moment, max_age: (
+        NexusCoordinator._planner_measurement_diagnostics(coordinator, moment, max_age)
+    )
+    caplog.set_level(logging.WARNING, logger=coordinator_module.__name__)
+
+    for _ in range(2):
+        NexusCoordinator._log_planner_input_failure(
+            coordinator,
+            now,
+            {CONF_BATTERY_SOC: 50.0},
+            (100.0, 100.0, 100.0),
+            0.0,
+            (5000.0, 5000.0),
+        )
+
+    assert CONF_BATTERY_POWER in caplog.text
+    assert "age_s': 45.0" in caplog.text
+    assert len(caplog.records) == 1
+
+
 def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
     coordinator, states, _, step = integration_coordinator(monkeypatch)
     now = datetime(2026, 11, 12, 12, tzinfo=UTC)
@@ -470,6 +513,15 @@ def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
         "fresh": False,
     }
     coordinator.hass.services.async_call.assert_not_awaited()
+
+
+def test_measurement_freshness_is_reported_when_powersave_is_disabled(monkeypatch):
+    coordinator, _, _, step = integration_coordinator(monkeypatch)
+    coordinator.settings[SET_POWERSAVE_ENABLED] = False
+
+    asyncio.run(step())
+
+    assert coordinator.powersave_details["measurements_fresh"] is True
 
 
 @pytest.mark.parametrize("condition", ["planner", "control", "measurement", "plan", "manual"])
