@@ -118,6 +118,7 @@ HOLD_POWER_W = 50.0
 EXPERIMENTAL_PLAN_INTERVAL_S = 300.0
 EXPERIMENTAL_PLAN_RETRY_S = 30.0
 EXPERIMENTAL_PLAN_MAX_AGE_S = EXPERIMENTAL_PLAN_INTERVAL_S + 60.0
+MIN_MEASUREMENT_MAX_AGE_S = 60.0
 
 
 def _export_reserve_soc(minimum_soc: float, export_includes_tax: bool) -> float:
@@ -1181,7 +1182,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         ages = self._planner_measurement_ages(now)
         interval = self.sample_estimator.interval_s
         max_measurement_age = (
-            max(30.0, interval * 3) if math.isfinite(interval) and interval > 0 else None
+            max(MIN_MEASUREMENT_MAX_AGE_S, interval * 3)
+            if math.isfinite(interval) and interval > 0
+            else None
         )
         readings_fresh = (
             ages is not None
@@ -1393,7 +1396,11 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     ) -> None:
         """Log the measurement snapshot once per distinct planner-input failure."""
         interval = self.sample_estimator.interval_s
-        max_age_s = max(30.0, interval * 3) if math.isfinite(interval) and interval > 0 else None
+        max_age_s = (
+            max(MIN_MEASUREMENT_MAX_AGE_S, interval * 3)
+            if math.isfinite(interval) and interval > 0
+            else None
+        )
         measurements = self._planner_measurement_diagnostics(now, max_age_s)
         failed = {
             key: details for key, details in measurements.items() if not details["fresh"]
@@ -1536,7 +1543,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 battery_power_w=battery_power,
                 pv_power_w=data.get(PV_POWER_ENTITIES[0]),  # type: ignore[arg-type]
                 measurement_ages_s=self._planner_measurement_ages(now),
-                max_measurement_age_s=max(30.0, interval * 3),
+                max_measurement_age_s=max(MIN_MEASUREMENT_MAX_AGE_S, interval * 3),
             )
         except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
             return idle

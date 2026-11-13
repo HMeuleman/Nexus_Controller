@@ -2136,7 +2136,7 @@ def test_offline_watchdog_stops_after_reports_expire_without_grid_event(monkeypa
     )
     assert _calls(hass)[-1] == ("switch", "turn_on", {"entity_id": "switch.d"})
 
-    clock[0] += timedelta(seconds=31)
+    clock[0] += timedelta(seconds=61)
     asyncio.run(
         NexusCoordinator._async_control(
             coordinator, data, legacy, (100.0, 100.0, 100.0), 0.0, (3000.0, 3000.0)

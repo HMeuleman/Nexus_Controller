@@ -422,17 +422,19 @@ def test_measurement_diagnostics_identify_stale_and_unavailable_inputs():
     states = {
         key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
     }
-    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=40)
+    states[CONF_GRID_POWER_L1].last_reported = now - timedelta(seconds=36.42)
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=70)
     states[CONF_BATTERY_POWER].state = "unavailable"
     coordinator = SimpleNamespace(
         configured_entity_id=lambda key: key,
         hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
     )
 
-    details = NexusCoordinator._planner_measurement_diagnostics(coordinator, now, 30.0)
+    details = NexusCoordinator._planner_measurement_diagnostics(coordinator, now, 60.0)
 
     assert details[CONF_GRID_POWER_L1]["fresh"] is True
-    assert details[CONF_BATTERY_SOC]["age_s"] == 40
+    assert details[CONF_GRID_POWER_L1]["age_s"] == pytest.approx(36.42)
+    assert details[CONF_BATTERY_SOC]["age_s"] == 70
     assert details[CONF_BATTERY_SOC]["fresh"] is False
     assert details[CONF_BATTERY_POWER]["state"] == "unavailable"
     assert details[CONF_BATTERY_POWER]["fresh"] is False
@@ -450,7 +452,7 @@ def test_planner_input_warning_names_stale_measurement(caplog):
     states = {
         key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
     }
-    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=45)
+    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=70)
     coordinator = SimpleNamespace(
         configured_entity_id=lambda key: key,
         hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
@@ -473,7 +475,7 @@ def test_planner_input_warning_names_stale_measurement(caplog):
         )
 
     assert CONF_BATTERY_POWER in caplog.text
-    assert "age_s': 45.0" in caplog.text
+    assert "age_s': 70.0" in caplog.text
     assert len(caplog.records) == 1
 
 
@@ -495,21 +497,21 @@ def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
             for key in keys
         }
     )
-    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=40)
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=70)
     coordinator._planner_measurement_ages = lambda moment: (
         NexusCoordinator._planner_measurement_ages(coordinator, moment)
     )
 
     assert asyncio.run(step()) is True
     details = coordinator.powersave_details
-    assert details["measurement_max_age_s"] == 30
+    assert details["measurement_max_age_s"] == 60
     assert details["measurements_fresh"] is False
     assert details["last_unavailable_at"] == now.isoformat()
     assert details["cooldown_until"] == (now + timedelta(minutes=15)).isoformat()
     assert details["measurements"][CONF_BATTERY_SOC] == {
         "entity_id": CONF_BATTERY_SOC,
         "state": "1",
-        "age_s": 40,
+        "age_s": 70,
         "fresh": False,
     }
     coordinator.hass.services.async_call.assert_not_awaited()
