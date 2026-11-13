@@ -24,6 +24,25 @@ class QuarterPlan:
     charge_source: tuple[str, ...] = ()
 
 
+def measurement_ages_fresh(
+    measurement_ages_s: tuple[float, ...] | None,
+    max_measurement_age_s: float | None,
+) -> bool:
+    """Require a fresh phase-group heartbeat plus fresh SOC and battery-power reports."""
+    if (
+        measurement_ages_s is None
+        or len(measurement_ages_s) != 5
+        or max_measurement_age_s is None
+        or not math.isfinite(max_measurement_age_s)
+        or max_measurement_age_s <= 0
+        or any(not math.isfinite(age) or age < 0 for age in measurement_ages_s)
+    ):
+        return False
+    return any(age <= max_measurement_age_s for age in measurement_ages_s[:3]) and all(
+        age <= max_measurement_age_s for age in measurement_ages_s[3:]
+    )
+
+
 def current_plan_dispatch(
     slot: dict | None,
     *,
@@ -44,15 +63,7 @@ def current_plan_dispatch(
     if (
         not isinstance(slot, dict)
         or now.tzinfo is None
-        or measurement_ages_s is None
-        or len(measurement_ages_s) != 5
-        or max_measurement_age_s is None
-        or not math.isfinite(max_measurement_age_s)
-        or max_measurement_age_s <= 0
-        or any(
-            not math.isfinite(age) or age < 0 or age > max_measurement_age_s
-            for age in measurement_ages_s
-        )
+        or not measurement_ages_fresh(measurement_ages_s, max_measurement_age_s)
     ):
         return idle
     try:

@@ -91,7 +91,12 @@ from .control import PIDMemory, PIDTuning, simulate_closed_loop_step
 from .dispatch import DispatchPlan, DispatchSettings
 from .net_charge import ExportSettings, NetChargeSettings
 from .powersave import PowerSaveMemory, PowerSaveSettings, decide_powersave, schedule_window
-from .quarter_planner import current_plan_dispatch, forecast_quarters_with_current, plan_quarters
+from .quarter_planner import (
+    current_plan_dispatch,
+    forecast_quarters_with_current,
+    measurement_ages_fresh,
+    plan_quarters,
+)
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
 from .solar import daylight_hours, hourly_forecast_quarters, solar_surplus_kwh, update_load_average
@@ -118,7 +123,7 @@ HOLD_POWER_W = 50.0
 EXPERIMENTAL_PLAN_INTERVAL_S = 300.0
 EXPERIMENTAL_PLAN_RETRY_S = 30.0
 EXPERIMENTAL_PLAN_MAX_AGE_S = EXPERIMENTAL_PLAN_INTERVAL_S + 60.0
-MIN_MEASUREMENT_MAX_AGE_S = 60.0
+MIN_MEASUREMENT_MAX_AGE_S = 120.0
 
 
 def _export_reserve_soc(minimum_soc: float, export_includes_tax: bool) -> float:
@@ -1186,11 +1191,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             if math.isfinite(interval) and interval > 0
             else None
         )
-        readings_fresh = (
-            ages is not None
-            and max_measurement_age is not None
-            and all(0 <= age <= max_measurement_age for age in ages)
-        )
+        readings_fresh = measurement_ages_fresh(ages, max_measurement_age)
         plan_earnings = self.experimental_quarter_plan.get("minimum_earnings_eur_kwh")
         if (
             enabled
@@ -1244,6 +1245,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         self._powersave_memory = decision.memory
         data["powersave_status"] = decision.reason
+        measurements = self._planner_measurement_diagnostics(now, max_measurement_age)
+        phase_group_fresh = any(
+            measurements.get(key, {}).get("fresh", False) for key in PHASE_POWER_ENTITIES
+        )
         self.powersave_details = {
             "configured": True,
             "enabled": enabled,
@@ -1253,7 +1258,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "requested_power": decision.power if enabled or self._powersave_wake_pending else None,
             "measurements_fresh": readings_fresh,
             "measurement_max_age_s": max_measurement_age,
-            "measurements": self._planner_measurement_diagnostics(now, max_measurement_age),
+            "phase_group_fresh": phase_group_fresh,
+            "measurements": measurements,
             "measurement_lockout": getattr(self, "_powersave_measurement_lockout", False),
         }
         if decision.reason != "invalid_settings_or_clock":
@@ -1304,15 +1310,19 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             and getattr(self, "_powersave_owns_off", False)
         ):
             measurements = self.powersave_details.get("measurements", {})
+            phase_group_fresh = bool(self.powersave_details.get("phase_group_fresh", False))
             failed_measurements = {
                 key: details
                 for key, details in measurements.items()
                 if not details.get("fresh", False)
+                and not (phase_group_fresh and key in PHASE_POWER_ENTITIES)
             }
             _LOGGER.error(
                 "Powersave measurement lockout: inverter was off under Nexus control; "
-                "max_age_s=%s failed_measurements=%s soc_pct=%r battery_power_w=%r",
+                "max_age_s=%s phase_group_fresh=%s failed_measurements=%s "
+                "soc_pct=%r battery_power_w=%r",
                 max_measurement_age,
+                phase_group_fresh,
                 failed_measurements or "none reported; inspect measurement values",
                 data.get(CONF_BATTERY_SOC),
                 battery_power,
@@ -1357,7 +1367,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     def _planner_measurement_diagnostics(
         self, now: datetime, max_age_s: float | None
     ) -> dict[str, dict[str, object]]:
-        """Describe the actual configured reports without relaxing freshness checks."""
+        """Describe individual report ages and whether any phase refreshed as a group."""
         details = {}
         for key in (*PHASE_POWER_ENTITIES, CONF_BATTERY_SOC, CONF_BATTERY_POWER):
             entity_id = self.configured_entity_id(key)
@@ -1384,6 +1394,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     and 0 <= age <= max_age_s
                 ),
             }
+        phase_group_fresh = any(details[key]["fresh"] for key in PHASE_POWER_ENTITIES)
+        for key in PHASE_POWER_ENTITIES:
+            details[key]["phase_group_fresh"] = phase_group_fresh
         return details
 
     def _log_planner_input_failure(
@@ -1402,8 +1415,14 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             else None
         )
         measurements = self._planner_measurement_diagnostics(now, max_age_s)
+        phase_group_fresh = any(
+            measurements.get(key, {}).get("fresh", False) for key in PHASE_POWER_ENTITIES
+        )
         failed = {
-            key: details for key, details in measurements.items() if not details["fresh"]
+            key: details
+            for key, details in measurements.items()
+            if not details["fresh"]
+            and not (phase_group_fresh and key in PHASE_POWER_ENTITIES)
         }
         signature = tuple(
             (key, str(details["state"])) for key, details in failed.items()
@@ -1412,9 +1431,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             return
         self._last_planner_input_warning_signature = signature
         _LOGGER.warning(
-            "Quarter-plan inputs unavailable; max_age_s=%s failed_measurements=%s "
-            "dispatch_values=%s",
+            "Quarter-plan inputs unavailable; max_age_s=%s phase_group_fresh=%s "
+            "failed_measurements=%s dispatch_values=%s",
             max_age_s,
+            phase_group_fresh,
             failed or "none; one or more planner values or slot fields are invalid",
             {
                 "phases_w": phases,

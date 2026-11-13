@@ -422,19 +422,23 @@ def test_measurement_diagnostics_identify_stale_and_unavailable_inputs():
     states = {
         key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
     }
-    states[CONF_GRID_POWER_L1].last_reported = now - timedelta(seconds=36.42)
-    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=70)
+    states[CONF_GRID_POWER_L1].last_reported = now - timedelta(seconds=130)
+    states[CONF_GRID_POWER_L2].last_reported = now - timedelta(seconds=130)
+    states[CONF_GRID_POWER_L3].last_reported = now - timedelta(seconds=36.42)
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=130)
     states[CONF_BATTERY_POWER].state = "unavailable"
     coordinator = SimpleNamespace(
         configured_entity_id=lambda key: key,
         hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
     )
 
-    details = NexusCoordinator._planner_measurement_diagnostics(coordinator, now, 60.0)
+    details = NexusCoordinator._planner_measurement_diagnostics(coordinator, now, 120.0)
 
-    assert details[CONF_GRID_POWER_L1]["fresh"] is True
-    assert details[CONF_GRID_POWER_L1]["age_s"] == pytest.approx(36.42)
-    assert details[CONF_BATTERY_SOC]["age_s"] == 70
+    assert details[CONF_GRID_POWER_L1]["fresh"] is False
+    assert details[CONF_GRID_POWER_L3]["fresh"] is True
+    assert details[CONF_GRID_POWER_L1]["phase_group_fresh"] is True
+    assert details[CONF_GRID_POWER_L3]["age_s"] == pytest.approx(36.42)
+    assert details[CONF_BATTERY_SOC]["age_s"] == 130
     assert details[CONF_BATTERY_SOC]["fresh"] is False
     assert details[CONF_BATTERY_POWER]["state"] == "unavailable"
     assert details[CONF_BATTERY_POWER]["fresh"] is False
@@ -452,7 +456,10 @@ def test_planner_input_warning_names_stale_measurement(caplog):
     states = {
         key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=2)) for key in keys
     }
-    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=70)
+    states[CONF_GRID_POWER_L1].last_reported = now - timedelta(seconds=130)
+    states[CONF_GRID_POWER_L2].last_reported = now - timedelta(seconds=130)
+    states[CONF_GRID_POWER_L3].last_reported = now - timedelta(seconds=36.42)
+    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=130)
     coordinator = SimpleNamespace(
         configured_entity_id=lambda key: key,
         hass=SimpleNamespace(states=SimpleNamespace(get=states.get)),
@@ -475,7 +482,9 @@ def test_planner_input_warning_names_stale_measurement(caplog):
         )
 
     assert CONF_BATTERY_POWER in caplog.text
-    assert "age_s': 70.0" in caplog.text
+    assert "phase_group_fresh=True" in caplog.text
+    assert "age_s': 130.0" in caplog.text
+    assert CONF_GRID_POWER_L1 not in caplog.text
     assert len(caplog.records) == 1
 
 
@@ -497,21 +506,21 @@ def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
             for key in keys
         }
     )
-    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=70)
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=130)
     coordinator._planner_measurement_ages = lambda moment: (
         NexusCoordinator._planner_measurement_ages(coordinator, moment)
     )
 
     assert asyncio.run(step()) is True
     details = coordinator.powersave_details
-    assert details["measurement_max_age_s"] == 60
+    assert details["measurement_max_age_s"] == 120
     assert details["measurements_fresh"] is False
     assert details["last_unavailable_at"] == now.isoformat()
     assert details["cooldown_until"] == (now + timedelta(minutes=15)).isoformat()
     assert details["measurements"][CONF_BATTERY_SOC] == {
         "entity_id": CONF_BATTERY_SOC,
         "state": "1",
-        "age_s": 70,
+        "age_s": 130,
         "fresh": False,
     }
     coordinator.hass.services.async_call.assert_not_awaited()
@@ -524,6 +533,41 @@ def test_measurement_freshness_is_reported_when_powersave_is_disabled(monkeypatc
     asyncio.run(step())
 
     assert coordinator.powersave_details["measurements_fresh"] is True
+
+
+def test_one_fresh_phase_report_keeps_powersave_measurements_fresh(monkeypatch):
+    coordinator, states, _, step = integration_coordinator(monkeypatch)
+    now = datetime(2026, 11, 12, 12, tzinfo=UTC)
+    keys = (
+        CONF_GRID_POWER_L1,
+        CONF_GRID_POWER_L2,
+        CONF_GRID_POWER_L3,
+        CONF_BATTERY_SOC,
+        CONF_BATTERY_POWER,
+    )
+    original_configured = coordinator.configured_entity_id
+    coordinator.configured_entity_id = lambda key: key if key in keys else original_configured(key)
+    states.update(
+        {
+            key: SimpleNamespace(state="1", last_reported=now - timedelta(seconds=130))
+            for key in keys
+        }
+    )
+    states[CONF_GRID_POWER_L3].last_reported = now - timedelta(seconds=36.42)
+    states[CONF_BATTERY_SOC].last_reported = now - timedelta(seconds=2)
+    states[CONF_BATTERY_POWER].last_reported = now - timedelta(seconds=2)
+    coordinator._planner_measurement_ages = lambda moment: (
+        NexusCoordinator._planner_measurement_ages(coordinator, moment)
+    )
+
+    asyncio.run(step())
+
+    details = coordinator.powersave_details
+    assert details["measurement_max_age_s"] == 120
+    assert details["measurements_fresh"] is True
+    assert details["phase_group_fresh"] is True
+    assert details["measurements"][CONF_GRID_POWER_L1]["fresh"] is False
+    assert details["measurements"][CONF_GRID_POWER_L3]["fresh"] is True
 
 
 @pytest.mark.parametrize("condition", ["planner", "control", "measurement", "plan", "manual"])

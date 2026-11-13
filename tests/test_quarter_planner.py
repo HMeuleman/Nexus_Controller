@@ -66,7 +66,7 @@ def test_planned_dispatch_fails_idle_for_expired_or_missing_measurements():
         "grid_import_w": 500.0,
         "battery_power_w": 0.0,
         "measurement_ages_s": (0, 0, 0, 0, 0),
-        "max_measurement_age_s": 30.0,
+        "max_measurement_age_s": 120.0,
     }
 
     assert current_plan_dispatch(slot, **inputs).power_w == 3000.0
@@ -248,13 +248,20 @@ def test_stale_or_missing_measurement_reports_fail_idle():
         "grid_import_w": 500.0,
         "battery_power_w": 0.0,
         "measurement_ages_s": (1.0, 2.0, 3.0, 4.0, 5.0),
-        "max_measurement_age_s": 30.0,
+        "max_measurement_age_s": 120.0,
     }
 
     assert current_plan_dispatch(slot, **inputs).mode == "discharge"
     assert current_plan_dispatch(slot, **{**inputs, "measurement_ages_s": None}).mode == "idle"
+    assert current_plan_dispatch(
+        slot, **{**inputs, "measurement_ages_s": (130, 130, 36.42, 4, 5)}
+    ).mode == "discharge"
     assert (
-        current_plan_dispatch(slot, **{**inputs, "measurement_ages_s": (1, 2, 31, 4, 5)}).mode
+        current_plan_dispatch(slot, **{**inputs, "measurement_ages_s": (121, 122, 123, 4, 5)}).mode
+        == "idle"
+    )
+    assert (
+        current_plan_dispatch(slot, **{**inputs, "measurement_ages_s": (1, 2, 3, 121, 5)}).mode
         == "idle"
     )
     assert (
@@ -1551,7 +1558,7 @@ def test_coordinator_rejects_stale_plan_and_changed_current_price():
     assert (mismatch.mode, mismatch.reason) == ("idle", "planner_price_mismatch")
     assert action(now + timedelta(seconds=300)).mode == "discharge"
     assert action(now + timedelta(seconds=361)).mode == "idle"
-    coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
+    coordinator._planner_measurement_ages = lambda moment: (121, 122, 123, 1, 1)
     assert action(now).mode == "idle"
 
 
@@ -1603,7 +1610,7 @@ def test_earnings_change_keeps_only_committed_current_slot_usable():
     assert action(now, {**data, CONF_BATTERY_SOC: 10.0}).mode == "idle"
     assert action(now, {**data, CONF_ELECTRICITY_PRICE: 0.60}).mode == "idle"
     assert action(start + timedelta(minutes=15)).mode == "idle"
-    coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
+    coordinator._planner_measurement_ages = lambda moment: (121, 122, 123, 1, 1)
     assert action(now).mode == "idle"
     coordinator._planner_measurement_ages = lambda moment: (1, 1, 1, 1, 1)
     coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
@@ -2071,7 +2078,7 @@ def test_offline_override_chain_stops_when_measurements_become_stale(monkeypatch
     ]
 
     coordinator._grid_samples += 1
-    coordinator._planner_measurement_ages = lambda moment: (1, 1, 100, 1, 1)
+    coordinator._planner_measurement_ages = lambda moment: (121, 122, 123, 1, 1)
     asyncio.run(
         NexusCoordinator._async_control(
             coordinator, data, legacy, (100.0, 100.0, 100.0), 0.0, (3000.0, 3000.0)
@@ -2136,7 +2143,7 @@ def test_offline_watchdog_stops_after_reports_expire_without_grid_event(monkeypa
     )
     assert _calls(hass)[-1] == ("switch", "turn_on", {"entity_id": "switch.d"})
 
-    clock[0] += timedelta(seconds=61)
+    clock[0] += timedelta(seconds=121)
     asyncio.run(
         NexusCoordinator._async_control(
             coordinator, data, legacy, (100.0, 100.0, 100.0), 0.0, (3000.0, 3000.0)

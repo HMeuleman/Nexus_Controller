@@ -125,7 +125,7 @@ In **Developer Tools > States**, select **Inverter powersave status** to inspect
 | `configured` / `enabled` | Whether an inverter switch is selected and powersave is enabled |
 | `inverter_power` / `requested_power` | Observed switch state and the requested state; a request is not confirmation of a successful write |
 | `measurements_fresh` | Whether the required readings are recent enough for powersave decisions |
-| `measurement_max_age_s` | Maximum report age currently accepted for those readings; at least 60 s or three sample intervals |
+| `measurement_max_age_s` | Maximum report age currently accepted; at least 120 s or three sample intervals. L1/L2/L3 share freshness: any one recent report is the group heartbeat, while all three values must be valid |
 | `measurements` | Each configured phase, SOC and battery power entity's state, report age and freshness |
 | `measurement_lockout` | Whether powersave was disabled because measurements were lost after an automatic shutdown |
 | `inverter_on_since` | When the inverter was observed to turn on |
