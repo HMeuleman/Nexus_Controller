@@ -45,11 +45,9 @@ def test_unchanged_power_is_rewritten_after_the_keepalive_interval(monkeypatch):
     assert hass.services.async_call.await_count == 0
 
     clock[0] += 31
-    assert asyncio.run(actuator.async_apply("discharge", 1232, min_interval_s=10)) == "keepalive"
+    assert asyncio.run(actuator.async_apply("discharge", 2345, min_interval_s=10)) == "keepalive"
     assert _calls(hass) == [
-        ("switch", "turn_off", {"entity_id": "switch.d"}),
-        ("number", "set_value", {"entity_id": "number.dp", "value": 1230}),
-        ("switch", "turn_on", {"entity_id": "switch.d"}),
+        ("solis_modbus", "solis_force_battery_discharge", {"power_watts": 2340}),
     ]
 
 
@@ -67,7 +65,23 @@ def test_a_mode_the_inverter_dropped_is_started_again(monkeypatch):
 
     clock[0] += 20
     assert asyncio.run(actuator.async_apply("discharge", 1230, min_interval_s=10)) == "restarted"
-    assert _calls(hass)[-1] == ("switch", "turn_on", {"entity_id": "switch.d"})
+    assert _calls(hass) == [
+        ("solis_modbus", "solis_force_battery_discharge", {"power_watts": 1230}),
+    ]
+
+
+def test_release_zeros_both_power_setpoints_before_stopping_force_mode():
+    actuator, hass = _actuator()
+    asyncio.run(actuator.async_apply("discharge", 1230, min_interval_s=10))
+    hass.services.async_call.reset_mock()
+
+    asyncio.run(actuator.async_release())
+
+    assert _calls(hass) == [
+        ("number", "set_value", {"entity_id": "number.cp", "value": 0}),
+        ("number", "set_value", {"entity_id": "number.dp", "value": 0}),
+        ("solis_modbus", "solis_stop_force_charge_discharge", {}),
+    ]
 
 
 def test_power_rounding_never_exceeds_requested_limit():

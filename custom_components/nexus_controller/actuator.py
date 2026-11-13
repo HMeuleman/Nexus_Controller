@@ -19,6 +19,7 @@ MIN_WRITE_INTERVAL_S = 2.0
 KEEPALIVE_S = 60.0
 # The enable switch may lag behind a write; do not judge it before this has passed.
 SETTLE_S = 15.0
+MIN_DIRECTION_DELAY_S = KEEPALIVE_S + SETTLE_S
 
 
 class ActuatorError(Exception):
@@ -26,11 +27,10 @@ class ActuatorError(Exception):
 
 
 class BatteryActuator:
-    """Maps a (mode, power) request onto the enable switches and power numbers.
+    """Maps a (mode, power) request onto the Solis controls.
 
-    Mode changes go through a fixed sequence: both modes off, target power set, then the
-    target mode on. Idle simply turns both modes off, which returns the inverter to its
-    own behaviour.
+    Starts use the configured switches and power numbers. Keepalives and stops use the
+    Solis force services so refreshes carry the current target and stops clear its setpoint.
     """
 
     def __init__(
@@ -67,12 +67,12 @@ class BatteryActuator:
         if mode == self._mode:
             enable = self._hass.states.get(self._enable[mode])
             if enable is not None and enable.state != "on" and now - self._last_enable > SETTLE_S:
-                # The inverter dropped the mode by itself: start it again.
-                await self._async_start(mode, power_w, other_off=False)
+                # The inverter dropped the mode by itself: reassert it with the desired power.
+                await self._async_force(mode, power_w)
                 return "restarted"
             if now - self._last_enable >= KEEPALIVE_S:
-                # Toggle off/on so the inverter sees a fresh enable, not an unchanged value.
-                await self._async_start(mode, power_w, other_off=False)
+                # Refresh mode and the controller's current target without an off/on toggle.
+                await self._async_force(mode, power_w)
                 return "keepalive"
             if 0 <= power_w - self._power_w < POWER_CHANGE_DEADBAND_W:
                 return "holding"
@@ -84,14 +84,14 @@ class BatteryActuator:
             self._last_write = now
             return "power_updated"
 
-        if self._mode in ("charge", "discharge") and direction_delay_s > 0:
+        if self._mode in ("charge", "discharge"):
             # Never reverse directly: stop first, the delay then runs from this moment.
             await self._async_idle()
             return "idle_before_reverse"
+        required_delay_s = max(direction_delay_s, MIN_DIRECTION_DELAY_S)
         if (
-            direction_delay_s > 0
-            and self._last_active not in (None, mode)
-            and now - self._last_stop < direction_delay_s
+            self._last_active not in (None, mode)
+            and now - self._last_stop < required_delay_s
         ):
             await self._async_idle()
             return "waiting_direction_delay"
@@ -125,8 +125,25 @@ class BatteryActuator:
         if self._mode == "idle" and not force:
             return "idle"
         self._note_stop()
-        for mode in ("charge", "discharge"):
-            await self._async_switch(mode, False)
+        modes = (
+            (self._mode,)
+            if self._mode in ("charge", "discharge")
+            else ("charge", "discharge")
+        )
+        errors = []
+        for mode in modes:
+            try:
+                await self._call(
+                    "number", "set_value", {"entity_id": self._power[mode], "value": 0}
+                )
+            except ActuatorError as err:
+                errors.append(err)
+        try:
+            await self._call("solis_modbus", "solis_stop_force_charge_discharge", {})
+        except ActuatorError as err:
+            errors.append(err)
+        if errors:
+            raise ActuatorError("; ".join(str(err) for err in errors))
         self._mode = "idle"
         self._power_w = 0.0
         self._last_write = time.monotonic()
@@ -139,6 +156,12 @@ class BatteryActuator:
 
     async def _async_set_power(self, mode: str, power_w: float) -> float:
         """Write the power in the entity's own unit, within its limits; return watts written."""
+        value, factor = self._power_value(mode, power_w)
+        await self._call("number", "set_value", {"entity_id": self._power[mode], "value": value})
+        return value * factor
+
+    def _power_value(self, mode: str, power_w: float) -> tuple[float, float]:
+        """Convert watts to the configured number entity's unit and supported step."""
         entity_id = self._power[mode]
         state = self._hass.states.get(entity_id)
         if state is None:
@@ -162,8 +185,18 @@ class BatteryActuator:
             value = origin + math.floor((value - origin) / step) * step
         if value <= 0:
             raise ActuatorError(f"{entity_id} cannot represent requested power")
-        await self._call("number", "set_value", {"entity_id": entity_id, "value": value})
-        return value * factor
+        return value, factor
+
+    async def _async_force(self, mode: str, power_w: float) -> None:
+        """Refresh a force mode and its setpoint through Solis Modbus in one ordered call."""
+        value, factor = self._power_value(mode, power_w)
+        await self._call(
+            "solis_modbus",
+            f"solis_force_battery_{mode}",
+            {"power_watts": int(round(value * factor))},
+        )
+        self._power_w = value * factor
+        self._last_write = self._last_enable = time.monotonic()
 
     async def _call(self, domain: str, service: str, data: dict) -> None:
         try:

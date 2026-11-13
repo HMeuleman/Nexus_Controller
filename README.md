@@ -57,7 +57,7 @@ Settings (configuration entities, values survive restarts):
 | Minimum SOC to allow discharge | 10 % | 7 to 99 |
 | Control offset | 50 W | Shifts the PID setpoint: slight export when discharging, slight import when charging |
 | Minimum power to control | 100 W | Below this (never lower than the offset) the PID does nothing |
-| Idle time before reversing direction | 60 s | 0 allowed |
+| Idle time before reversing direction | 75 s | 75 to 600 s; always longer than the 60 s keepalive interval |
 | Solar production above which discharge is blocked | 10000 W | 0 blocks discharge as soon as there is any PV output |
 | PID gains and deadbands | kp 0.5, ki 0, kd 0, 15/8 W | kp is defined at 10 s samples |
 | Write-down: hours / minimum SOC / percent per day | 24 h, 50 %, 33 % | 0 percent turns it off |
@@ -157,10 +157,10 @@ If the battery stays above the configured SOC and does not discharge for the con
 
 ## Safety mechanisms
 
-- **Control is off by default** and after every restart. Turning it off, an error, or unloading the integration releases the battery (both force modes off).
+- **Control is off by default** and after every restart. Turning it off, an error, or unloading the integration writes zero to the configured power setpoints, then clears force mode.
 - **Write sequence:** both modes off, power set, then the mode on, rate limited.
-- **Keepalive:** the Solis falls back to zero when it is not refreshed, so every 60 s the enable switch is cycled off and on together with the power write. If the inverter drops the mode on its own, it is started again.
-- **Idle time between directions:** the battery goes idle for the configured time before it may reverse.
+- **Keepalive:** on a control update after 60 s, the active Solis force-charge/discharge service is refreshed with the latest Nexus power target, without an off/on toggle. If the inverter drops the mode on its own, the same service reasserts the mode and target.
+- **Idle time between directions:** the battery goes idle for at least 75 s before it may reverse, even if a lower delay was previously stored.
 - **Limits:** minimum SOC, 100 % maximum, per-phase headroom and the 10 kW cap also apply to the manual override.
 - **Unit check:** the power numbers are read for their unit (W or kW) and limits before writing; other units stop the control.
 

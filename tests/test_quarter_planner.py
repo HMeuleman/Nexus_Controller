@@ -207,10 +207,10 @@ def test_planned_reversal_uses_actuator_idle_delay(monkeypatch):
         == "idle_before_reverse"
     )
     assert _calls(hass)[-2:] == [
-        ("switch", "turn_off", {"entity_id": "switch.c"}),
-        ("switch", "turn_off", {"entity_id": "switch.d"}),
+        ("number", "set_value", {"entity_id": "number.cp", "value": 0}),
+        ("solis_modbus", "solis_stop_force_charge_discharge", {}),
     ]
-    clock[0] += 59
+    clock[0] += 74
     assert (
         asyncio.run(
             actuator.async_apply(
@@ -2074,8 +2074,8 @@ def test_offline_override_chain_stops_when_measurements_become_stale(monkeypatch
         )
     )
     assert _calls(hass)[-2:] == [
-        ("switch", "turn_off", {"entity_id": "switch.c"}),
-        ("switch", "turn_off", {"entity_id": "switch.d"}),
+        ("number", "set_value", {"entity_id": "number.dp", "value": 0}),
+        ("solis_modbus", "solis_stop_force_charge_discharge", {}),
     ]
 
 
@@ -2139,8 +2139,8 @@ def test_offline_watchdog_stops_after_reports_expire_without_grid_event(monkeypa
         )
     )
     assert _calls(hass)[-2:] == [
-        ("switch", "turn_off", {"entity_id": "switch.c"}),
-        ("switch", "turn_off", {"entity_id": "switch.d"}),
+        ("number", "set_value", {"entity_id": "number.dp", "value": 0}),
+        ("solis_modbus", "solis_stop_force_charge_discharge", {}),
     ]
 
 

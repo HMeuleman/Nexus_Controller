@@ -133,7 +133,7 @@ SETTINGS = (
     NexusNumberDescription(
         key=SET_DIRECTION_DELAY,
         translation_key=SET_DIRECTION_DELAY,
-        native_min_value=0,
+        native_min_value=75,
         native_max_value=600,
         native_step=1,
         native_unit_of_measurement="s",
