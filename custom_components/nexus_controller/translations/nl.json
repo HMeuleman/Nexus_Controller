@@ -22,6 +22,9 @@
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "inverter_power_entity": "Omvormer aan/uit-schakelaar (optioneel)",
+          "house_energy_entity": "Dagelijkse verbruiksteller woning (Wh/kWh; inclusief warmtepomp, exclusief batterijladen; optionele diagnose)",
+          "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
+          "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
@@ -56,6 +59,9 @@
           "discharge_enable_entity": "Schakelaar batterij ontladen",
           "discharge_power_entity": "Ontlaadvermogen batterij",
           "inverter_power_entity": "Omvormer aan/uit-schakelaar (optioneel)",
+          "house_energy_entity": "Dagelijkse verbruiksteller woning (Wh/kWh; inclusief warmtepomp, exclusief batterijladen; optionele diagnose)",
+          "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
+          "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
@@ -94,7 +100,9 @@
       "control_power": {"name": "Sturing: vermogen"},
       "control_status": {"name": "Sturing: status"},
       "powersave_status": {"name": "Omvormer energiebesparing status"},
-      "experimental_quarter_plan": {"name": "Kwartierplan"}
+      "experimental_quarter_plan": {"name": "Kwartierplan"},
+      "demand_forecast": {"name": "Verbruiksverwachting komende 24 uur"},
+      "heatpump_forecast": {"name": "Warmtepompverwachting komende 24 uur"}
     },
     "number": {
       "powersave_cooldown_min": {"name": "Omvormer energiebesparing wachttijd"},

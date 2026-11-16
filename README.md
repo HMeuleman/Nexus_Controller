@@ -188,6 +188,44 @@ Optional hourly forecast inputs can be selected explicitly for today's Solar For
 
 Solar-only charging is considered only when paired with a profitable discharge within the forecast. Missing forecast taxes use the configured fallback. The `slots` attribute is not stored in Recorder history.
 
+## Diagnostic Consumption Forecast
+
+Select the optional daily household energy counter, heat-pump electrical power sensor,
+and hourly forecast weather entity in the integration's configuration. The counter must
+include heat-pump use but exclude battery charging. Units are read from the selected
+entities; IDs are never auto-selected. Weather is requested through `weather.get_forecasts`
+in the background every 15 minutes; cached forecasts expire after two hours.
+
+The **Consumption forecast next 24 hours** and **Heat-pump forecast next 24 hours** sensors
+expose kWh totals plus 96 timestamped `slots` with `baseline_w`, `heatpump_w`, `total_w`,
+`temperature_c`, and `history_days`. These are diagnostics only: neither the battery
+planner nor the live controller uses them. There is no automatic CSV or Recorder-history
+import; the integration starts learning after these inputs are configured.
+
+The household baseline averages each local quarter over the preceding seven days,
+excluding today, and requires at least three observed days per quarter. Measured
+heat-pump energy is subtracted before averaging. Counter snapshots use median readings
+near each quarter's ends, not a sum of positive sample changes. Negative readings,
+reset quarters, incomplete intervals, and intervals with heat-pump energy exceeding
+household energy are discarded. Restart gaps are not filled. Ambiguous autumn DST
+quarters are excluded from learning; the forecast itself uses real UTC quarter steps.
+
+Heat-pump estimates use the provisional curve fitted to the supplied September-November
+2026 data: `6.253 + 45.759 * max(0, 18 - T) + 168.532 * max(0, 8 - T)` W, during
+06:00-23:00 in Home Assistant's local timezone. This fit is specific to the supplied
+installation, not a general heat-pump model. Temperatures outside the observed
+1.1-27 C range are flagged as extrapolations. Night demand is estimated as zero;
+morning recovery, hot water, and defrost are not explicitly modelled.
+
+An [ApexCharts card YAML](dashboard_demand.yaml) plots baseline, heat pump, total demand,
+and temperature. Install ApexCharts Card through HACS and replace all four placeholder
+entity references with the actual **Heat-pump forecast next 24 hours** sensor ID.
+Using that entity allows the heat-pump graph to appear while the household baseline
+is still learning. Missing values remain `null`, not zero. The normal history graph
+cannot plot future timestamps. `slots` is excluded from Recorder; graph data comes
+from the sensor's current attributes. The status attribute is `partial` until every
+quarter has baseline and weather coverage, then `ready`.
+
 ## Development
 
 Python 3.12 or newer:

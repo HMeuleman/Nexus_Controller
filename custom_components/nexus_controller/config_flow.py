@@ -13,6 +13,7 @@ from .const import (
     CONF_BATTERY_SOC,
     CONF_CHARGE_ENABLE,
     CONF_CHARGE_POWER,
+    CONF_DEMAND_WEATHER,
     CONF_DISCHARGE_ENABLE,
     CONF_DISCHARGE_POWER,
     CONF_ELECTRICITY_PRICE,
@@ -20,6 +21,8 @@ from .const import (
     CONF_GRID_POWER_L1,
     CONF_GRID_POWER_L2,
     CONF_GRID_POWER_L3,
+    CONF_HEATPUMP_POWER,
+    CONF_HOUSE_ENERGY,
     CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
@@ -103,6 +106,8 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         CONF_SOLAR_FORECAST,
         CONF_SOLAR_HOURLY_TODAY,
         CONF_SOLAR_HOURLY_TOMORROW,
+        CONF_HOUSE_ENERGY,
+        CONF_HEATPUMP_POWER,
     ):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
@@ -114,6 +119,12 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         )
     else:
         schema[vol.Optional(CONF_INVERTER_POWER)] = _entity_selector("switch")
+    if defaults.get(CONF_DEMAND_WEATHER):
+        schema[vol.Optional(CONF_DEMAND_WEATHER, default=defaults[CONF_DEMAND_WEATHER])] = (
+            _entity_selector("weather")
+        )
+    else:
+        schema[vol.Optional(CONF_DEMAND_WEATHER)] = _entity_selector("weather")
     return vol.Schema(schema)
 
 
@@ -186,6 +197,9 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_SOLAR_HOURLY_TODAY,
                 CONF_SOLAR_HOURLY_TOMORROW,
                 CONF_INVERTER_POWER,
+                CONF_HOUSE_ENERGY,
+                CONF_HEATPUMP_POWER,
+                CONF_DEMAND_WEATHER,
             ):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)

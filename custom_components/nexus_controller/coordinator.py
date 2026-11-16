@@ -29,11 +29,14 @@ from .const import (
     CONF_BATTERY_SOC,
     CONF_CHARGE_ENABLE,
     CONF_CHARGE_POWER,
+    CONF_DEMAND_WEATHER,
     CONF_DISCHARGE_ENABLE,
     CONF_DISCHARGE_POWER,
     CONF_ELECTRICITY_PRICE,
     CONF_FUSE_LIMIT,
     CONF_GRID_POWER_L1,
+    CONF_HEATPUMP_POWER,
+    CONF_HOUSE_ENERGY,
     CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
@@ -88,6 +91,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .control import PIDMemory, PIDTuning, simulate_closed_loop_step
+from .demand import DemandHistory, parse_temperatures
 from .dispatch import DispatchPlan, DispatchSettings
 from .net_charge import ExportSettings, NetChargeSettings
 from .powersave import PowerSaveMemory, PowerSaveSettings, decide_powersave, schedule_window
@@ -158,6 +162,18 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._powersave_store: Store = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.powersave"
         )
+        self._demand_history = DemandHistory()
+        self._demand_store: Store = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.demand"
+        )
+        self.demand_details: dict = {
+            "status": "not_configured", "diagnostic_only": True, "slots": []
+        }
+        self._demand_task: asyncio.Task | None = None
+        self._demand_weather_attempt: datetime | None = None
+        self._demand_weather_updated: datetime | None = None
+        self._demand_temperatures: list[tuple[datetime, float]] = []
+        self._demand_weather_status = "not_requested"
         started = time.monotonic()
         self._powersave_memory = PowerSaveMemory(started, started, started)
         self._powersave_saved_maintenance = started
@@ -207,6 +223,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         stored = await self._store.async_load()
         if isinstance(stored, dict):
             self.tracker.state = BatteryTracker.state_from_dict(stored)
+        demand = await self._demand_store.async_load()
+        if isinstance(demand, dict) and demand.get("sources") == self._demand_sources():
+            self._demand_history.restore(demand)
         saved = await self._powersave_store.async_load()
         now_s = time.monotonic()
         now_wall = dt_util.utcnow().timestamp()
@@ -261,6 +280,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 pass
         if self._control_was_on:
             await self._async_release()
+        if self._demand_task is not None and not self._demand_task.done():
+            self._demand_task.cancel()
+            try:
+                await self._demand_task
+            except asyncio.CancelledError:
+                pass
+        await self._demand_store.async_save(self._demand_data())
         if self.settings[SET_POWERSAVE_ENABLED] or self._powersave_wake_pending:
             await self._async_set_inverter_power(True)
         await self._powersave_store.async_save(self._powersave_data())
@@ -480,8 +506,108 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             data["control_power"] = 0.0
             data["control_status"] = "inverter_not_ready"
         self._schedule_experimental_quarter_plan(data, now, limits)
+        self._update_demand_forecast(data, now)
         self._store.async_delay_save(self.tracker.as_dict, 60)
         return data
+
+    def _demand_sources(self) -> list[str | None]:
+        """Keep learned energy profiles tied to the selected measurement sources."""
+        return [self.configured_entity_id(key) for key in (CONF_HOUSE_ENERGY, CONF_HEATPUMP_POWER)]
+
+    def _demand_data(self) -> dict:
+        return {**self._demand_history.as_dict(), "sources": self._demand_sources()}
+
+    def _update_demand_forecast(self, data: dict, now: datetime) -> None:
+        """Collect optional diagnostics only, after the battery control step."""
+        data["demand_forecast"] = data["heatpump_forecast"] = None
+        energy_id, power_id = self._demand_sources()
+        weather_id = self.configured_entity_id(CONF_DEMAND_WEATHER)
+        if not energy_id or not power_id or not weather_id:
+            self.demand_details = {"status": "not_configured", "diagnostic_only": True, "slots": []}
+            return
+        energy = self.hass.states.get(energy_id)
+        power = self.hass.states.get(power_id)
+        energy_kwh = parse_energy_kwh(
+            energy.state if energy is not None else None,
+            energy.attributes.get("unit_of_measurement") if energy is not None else None,
+        )
+        power_w = sum_power_states([
+            (power.state, power.attributes.get("unit_of_measurement"))
+        ]) if power is not None else None
+        timezone = dt_util.get_time_zone(self.hass.config.time_zone)
+        if timezone is None:
+            self.demand_details = {
+                "status": "invalid_timezone", "diagnostic_only": True, "slots": []
+            }
+            return
+        self._demand_history.observe(now, energy_kwh, power_w, timezone)
+        self._demand_store.async_delay_save(self._demand_data, 60)
+        if (
+            (self._demand_task is None or self._demand_task.done())
+            and (
+                self._demand_weather_attempt is None
+                or (now - self._demand_weather_attempt).total_seconds() >= 900
+            )
+        ):
+            self._demand_weather_attempt = now
+            self._demand_task = self.hass.async_create_task(self._async_demand_weather(weather_id))
+        temperatures = self._demand_temperatures
+        if (
+            self._demand_weather_updated is None
+            or (now - self._demand_weather_updated).total_seconds() > 7200
+        ):
+            temperatures = []
+        self.demand_details = self._demand_history.forecast(now, temperatures, timezone)
+        self.demand_details.update(
+            weather_entity=weather_id,
+            weather_status=self._demand_weather_status,
+            weather_updated_at=(
+                self._demand_weather_updated.isoformat() if self._demand_weather_updated else None
+            ),
+            input_status=(
+                "ok" if energy_kwh is not None and power_w is not None else "inputs_unavailable"
+            ),
+            model="provisional_temperature_curve_2026_11",
+            heatpump_schedule="06:00-23:00 local time",
+        )
+        data["demand_forecast"] = self.demand_details["household_kwh"]
+        data["heatpump_forecast"] = self.demand_details["heatpump_kwh"]
+
+    async def _async_demand_weather(self, weather_id: str) -> None:
+        """Fetch forecasts without blocking or issuing any battery service calls."""
+        try:
+            response = await asyncio.wait_for(
+                self.hass.services.async_call(
+                    "weather", "get_forecasts", {"entity_id": weather_id, "type": "hourly"},
+                    blocking=True, return_response=True,
+                ),
+                timeout=15,
+            )
+            state = self.hass.states.get(weather_id)
+            unit = state.attributes.get("temperature_unit") if state is not None else None
+            rows = (
+                response.get(weather_id, {}).get("forecast") if isinstance(response, dict) else None
+            )
+            points = parse_temperatures(rows, unit)
+            if not points:
+                self._demand_weather_status = "forecast_unavailable"
+                return
+            now = dt_util.utcnow()
+            if state is not None and points[0][0] > now:
+                current = parse_temperatures(
+                    [{
+                        "datetime": now.isoformat(),
+                        "temperature": state.attributes.get("temperature"),
+                    }],
+                    unit,
+                )
+                points = current + points
+            self._demand_temperatures = points
+            self._demand_weather_updated = now
+            self._demand_weather_status = "ok"
+        except Exception as err:
+            self._demand_weather_status = "request_failed"
+            _LOGGER.warning("Diagnostic demand weather request failed for %s: %s", weather_id, err)
 
     def _schedule_experimental_quarter_plan(
         self,

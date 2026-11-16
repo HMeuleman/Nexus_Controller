@@ -1,0 +1,66 @@
+type: custom:apexcharts-card
+header:
+  show: true
+  title: Consumption forecast
+graph_span: 24h
+span:
+  start: minute
+now:
+  show: true
+yaxis:
+  - id: power
+    min: 0
+    decimals: 0
+    apex_config:
+      title:
+        text: W
+  - id: temperature
+    opposite: true
+    decimals: 1
+    apex_config:
+      title:
+        text: Celsius
+series:
+  - entity: sensor.replace_with_your_heatpump_forecast_entity
+    name: Total consumption
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#236e4c'
+    stroke_width: 3
+    curve: stepline
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.total_w]);
+  - entity: sensor.replace_with_your_heatpump_forecast_entity
+    name: Household without heat pump
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#4e789f'
+    stroke_width: 2
+    curve: stepline
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.baseline_w]);
+  - entity: sensor.replace_with_your_heatpump_forecast_entity
+    name: Heat pump
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#c48928'
+    stroke_width: 2
+    curve: stepline
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.heatpump_w]);
+  - entity: sensor.replace_with_your_heatpump_forecast_entity
+    name: Outside temperature
+    yaxis_id: temperature
+    unit: C
+    type: line
+    color: '#b04f65'
+    stroke_width: 1
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.temperature_c]);

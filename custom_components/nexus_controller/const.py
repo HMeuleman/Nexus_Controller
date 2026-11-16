@@ -24,6 +24,9 @@ CONF_DISCHARGE_ENABLE: Final = "discharge_enable_entity"
 CONF_DISCHARGE_POWER: Final = "discharge_power_entity"
 CONF_INVERTER_POWER: Final = "inverter_power_entity"
 CONF_FUSE_LIMIT: Final = "fuse_limit_amps"
+CONF_HOUSE_ENERGY: Final = "house_energy_entity"
+CONF_HEATPUMP_POWER: Final = "heatpump_power_entity"
+CONF_DEMAND_WEATHER: Final = "demand_weather_entity"
 
 # Legacy config keys, only read to seed the new setting entities.
 LEGACY_PHASE_HEADROOM: Final = "phase_headroom_watts"
@@ -181,6 +184,8 @@ ENTITY_LABELS: Final = {
     "control_status": ("control_status", None),
     "powersave_status": ("powersave_status", None),
     "experimental_quarter_plan": ("experimental_quarter_plan", None),
+    "demand_forecast": ("demand_forecast", "kWh"),
+    "heatpump_forecast": ("heatpump_forecast", "kWh"),
 }
 
 ENTITY_PRECISION: Final = {
@@ -192,4 +197,6 @@ ENTITY_PRECISION: Final = {
     "discharge_threshold": 3,
     "avg_daytime_load": 0,
     "solar_surplus_forecast": 1,
+    "demand_forecast": 2,
+    "heatpump_forecast": 2,
 }

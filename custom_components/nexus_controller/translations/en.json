@@ -22,6 +22,9 @@
           "discharge_enable_entity": "Battery discharge switch",
           "discharge_power_entity": "Battery discharge power",
           "inverter_power_entity": "Inverter power switch (optional)",
+          "house_energy_entity": "Household daily energy counter (Wh/kWh; includes heat pump, excludes battery charging; optional diagnostics)",
+          "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
+          "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
@@ -56,6 +59,9 @@
           "discharge_enable_entity": "Battery discharge switch",
           "discharge_power_entity": "Battery discharge power",
           "inverter_power_entity": "Inverter power switch (optional)",
+          "house_energy_entity": "Household daily energy counter (Wh/kWh; includes heat pump, excludes battery charging; optional diagnostics)",
+          "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
+          "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
@@ -94,7 +100,9 @@
       "control_power": {"name": "Control: power"},
       "control_status": {"name": "Control: status"},
       "powersave_status": {"name": "Inverter powersave status"},
-      "experimental_quarter_plan": {"name": "Quarter-hour plan"}
+      "experimental_quarter_plan": {"name": "Quarter-hour plan"},
+      "demand_forecast": {"name": "Consumption forecast next 24 hours"},
+      "heatpump_forecast": {"name": "Heat-pump forecast next 24 hours"}
     },
     "number": {
       "powersave_cooldown_min": {"name": "Inverter powersave cooldown"},

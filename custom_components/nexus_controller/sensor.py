@@ -104,6 +104,8 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
             return self.coordinator.experimental_quarter_plan
         if self.entity_description.config_key == "powersave_status":
             return self.coordinator.powersave_details
+        if self.entity_description.config_key in ("demand_forecast", "heatpump_forecast"):
+            return self.coordinator.demand_details
         return None
 
     @callback

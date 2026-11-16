@@ -734,6 +734,7 @@ def test_restart_restores_last_maintenance_deadline(monkeypatch):
     coordinator = SimpleNamespace(
         _store=SimpleNamespace(async_load=AsyncMock(return_value=None)),
         _powersave_store=store,
+        _demand_store=SimpleNamespace(async_load=AsyncMock(return_value=None)),
         _powersave_data=lambda: {},
         configured_entity_id=lambda key: None,
     )
@@ -775,6 +776,7 @@ def test_main_control_loop_skips_writes_while_inverter_is_not_ready():
         _async_powersave_step=AsyncMock(return_value=False),
         _async_control=AsyncMock(),
         _schedule_experimental_quarter_plan=MagicMock(),
+        _update_demand_forecast=MagicMock(),
         _store=SimpleNamespace(async_delay_save=MagicMock()),
         tracker=SimpleNamespace(as_dict=lambda: {}),
     )
