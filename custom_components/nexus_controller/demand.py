@@ -43,6 +43,32 @@ def parse_temperatures(forecast: object, unit: str) -> list[tuple[datetime, floa
     return sorted(points.items())
 
 
+def normalize_temperature(value: object, unit: str) -> float | None:
+    """Normalize a current temperature reading to Celsius."""
+    if unit not in ("°C", "°F"):
+        return None
+    number = finite_number(value)
+    if number is None:
+        return None
+    return (number - 32) / 1.8 if unit == "°F" else number
+
+
+def temperature_at(temperatures: list[tuple[datetime, float]], when: datetime) -> float | None:
+    """Interpolate the fetched temperature forecast at `when`; None outside or across gaps."""
+    if not temperatures:
+        return None
+    times = [stamp.timestamp() for stamp, _ in temperatures]
+    position = bisect_right(times, when.timestamp())
+    if 0 < position < len(times) and times[position] - times[position - 1] <= 3600:
+        fraction = (when.timestamp() - times[position - 1]) / (
+            times[position] - times[position - 1]
+        )
+        return temperatures[position - 1][1] + fraction * (
+            temperatures[position][1] - temperatures[position - 1][1]
+        )
+    return None
+
+
 def heatpump_power(temperature_c: float, local_time: datetime) -> float:
     """Provisional electrical watts fitted to supplied September-November history."""
     if not 6 <= local_time.hour < 23:
@@ -168,7 +194,6 @@ class DemandHistory:
         if first < now:
             first += timedelta(minutes=15)
         today = now.astimezone(timezone).date()
-        times = [stamp.timestamp() for stamp, _ in temperatures]
         slots = []
         for index in range(96):
             start = first + timedelta(minutes=15 * index)
@@ -181,15 +206,7 @@ class DemandHistory:
             values = [value for value in history if value is not None]
             baseline = mean(values) if len(values) >= MIN_PROFILE_DAYS else None
             midpoint = start + timedelta(minutes=7, seconds=30)
-            position = bisect_right(times, midpoint.timestamp())
-            temperature = None
-            if 0 < position < len(times) and times[position] - times[position - 1] <= 3600:
-                fraction = (midpoint.timestamp() - times[position - 1]) / (
-                    times[position] - times[position - 1]
-                )
-                temperature = temperatures[position - 1][1] + fraction * (
-                    temperatures[position][1] - temperatures[position - 1][1]
-                )
+            temperature = temperature_at(temperatures, midpoint)
             heat = (
                 heatpump_power(temperature, midpoint.astimezone(timezone))
                 if temperature is not None

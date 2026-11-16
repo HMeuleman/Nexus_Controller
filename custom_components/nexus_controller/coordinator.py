@@ -91,7 +91,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .control import PIDMemory, PIDTuning, simulate_closed_loop_step
-from .demand import DemandHistory, parse_temperatures
+from .demand import DemandHistory, normalize_temperature, parse_temperatures, temperature_at
 from .dispatch import DispatchPlan, DispatchSettings
 from .net_charge import ExportSettings, NetChargeSettings
 from .powersave import PowerSaveMemory, PowerSaveSettings, decide_powersave, schedule_window
@@ -520,6 +520,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     def _update_demand_forecast(self, data: dict, now: datetime) -> None:
         """Collect optional diagnostics only, after the battery control step."""
         data["demand_forecast"] = data["heatpump_forecast"] = None
+        data["demand_forecast_now"] = 0.0
+        data["demand_temp_forecast"] = data["demand_temp_actual"] = None
         house_id, power_id = self._demand_sources()
         weather_id = self.configured_entity_id(CONF_DEMAND_WEATHER)
         if not house_id or not power_id or not weather_id:
@@ -571,6 +573,19 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         )
         data["demand_forecast"] = self.demand_details["household_kwh"]
         data["heatpump_forecast"] = self.demand_details["heatpump_kwh"]
+        slots = self.demand_details.get("slots") or []
+        # While the baseline is still learning total_w is None; show 0 so history stays usable.
+        data["demand_forecast_now"] = (slots[0]["total_w"] if slots else None) or 0.0
+        data["demand_temp_forecast"] = temperature_at(temperatures, now)
+        weather = self.hass.states.get(weather_id)
+        data["demand_temp_actual"] = (
+            normalize_temperature(
+                weather.attributes.get("temperature"),
+                weather.attributes.get("temperature_unit"),
+            )
+            if weather is not None
+            else None
+        )
 
     async def _async_demand_weather(self, weather_id: str) -> None:
         """Fetch forecasts without blocking or issuing any battery service calls."""

@@ -186,6 +186,9 @@ ENTITY_LABELS: Final = {
     "experimental_quarter_plan": ("experimental_quarter_plan", None),
     "demand_forecast": ("demand_forecast", "kWh"),
     "heatpump_forecast": ("heatpump_forecast", "kWh"),
+    "demand_forecast_now": ("demand_forecast_now", "W"),
+    "demand_temp_forecast": ("demand_temp_forecast", "°C"),
+    "demand_temp_actual": ("demand_temp_actual", "°C"),
 }
 
 ENTITY_PRECISION: Final = {
@@ -199,4 +202,7 @@ ENTITY_PRECISION: Final = {
     "solar_surplus_forecast": 1,
     "demand_forecast": 2,
     "heatpump_forecast": 2,
+    "demand_forecast_now": 0,
+    "demand_temp_forecast": 1,
+    "demand_temp_actual": 1,
 }

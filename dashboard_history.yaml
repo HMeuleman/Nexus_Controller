@@ -1,0 +1,60 @@
+type: custom:apexcharts-card
+header:
+  show: true
+  title: Consumption forecast versus actual (last 48 hours)
+graph_span: 48h
+span:
+  start: -48h
+now:
+  show: true
+apex_config:
+  chart:
+    height: 350
+yaxis:
+  - id: power
+    min: 0
+    decimals: 0
+    apex_config:
+      title:
+        text: W
+  - id: temperature
+    opposite: true
+    decimals: 1
+    apex_config:
+      title:
+        text: Celsius
+series:
+  - entity: sensor.replace_with_your_house_power_entity
+    name: Actual house power
+    yaxis_id: power
+    unit: W
+    type: area
+    color: '#236e4c'
+    stroke_width: 2
+    opacity: 0.6
+    statistics:
+      type: mean
+      period: 5minute
+  - entity: sensor.replace_with_your_consumption_forecast_now_entity
+    name: Forecast when made
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#4e789f'
+    stroke_width: 2
+    curve: stepline
+  - entity: sensor.replace_with_your_temperature_forecast_entity
+    name: Forecast temperature
+    yaxis_id: temperature
+    unit: C
+    type: line
+    color: '#c48928'
+    stroke_width: 1
+    dashed: true
+  - entity: sensor.replace_with_your_actual_temperature_entity
+    name: Actual temperature
+    yaxis_id: temperature
+    unit: C
+    type: line
+    color: '#b04f65'
+    stroke_width: 1

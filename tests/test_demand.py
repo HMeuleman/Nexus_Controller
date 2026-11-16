@@ -20,8 +20,31 @@ from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.demand import (
     DemandHistory,
     heatpump_power,
+    normalize_temperature,
     parse_temperatures,
+    temperature_at,
 )
+
+
+def test_temperature_is_interpolated_within_an_hour_and_none_across_gaps():
+    when = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    points = [
+        (when - timedelta(minutes=30), 12.0),
+        (when + timedelta(minutes=30), 6.0),
+        (when + timedelta(hours=4), 4.0),
+    ]
+    assert temperature_at(points, when) == pytest.approx(9.0)
+    assert temperature_at(points, when - timedelta(hours=2)) is None
+    assert temperature_at(points, when + timedelta(hours=5)) is None
+    assert temperature_at(points, when + timedelta(hours=2)) is None  # 3 h gap
+    assert temperature_at([], when) is None
+
+
+def test_current_temperature_normalizes_units_and_rejects_bad_values():
+    assert normalize_temperature(21, "°C") == 21.0
+    assert normalize_temperature(41, "°F") == pytest.approx(5.0)
+    assert normalize_temperature("bogus", "°C") is None
+    assert normalize_temperature(21, "K") is None
 
 
 def test_quarter_power_samples_remove_heatpump_and_ignore_negative_spike():
@@ -154,6 +177,12 @@ def test_optional_inputs_and_apexcharts_attribute_contract():
     ):
         assert "entity.attributes.slots" in series["data_generator"]
         assert f"slot.{field}" in series["data_generator"]
+    history = yaml.safe_load((Path(__file__).parents[1] / "dashboard_history.yaml").read_text())
+    assert history["type"] == "custom:apexcharts-card"
+    assert history["graph_span"] == "48h"
+    assert len(history["series"]) == 4
+    for series in history["series"]:
+        assert series["entity"].startswith("sensor.replace_with_your_")
 
 
 def test_background_weather_request_only_reads_selected_weather_entity():
@@ -260,6 +289,11 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         NexusCoordinator._update_demand_forecast(coordinator, data, now + timedelta(seconds=10))
         weather.assert_awaited_once()
         assert data["demand_forecast"] is None
+        assert data["heatpump_forecast"] is None
+        # Learning has not started: the recorded forecast-for-now reads 0, not null.
+        assert data["demand_forecast_now"] == 0.0
+        assert data["demand_temp_forecast"] is None
+        assert data["demand_temp_actual"] is None
         assert coordinator.demand_details["diagnostic_only"] is True
 
     asyncio.run(scenario())

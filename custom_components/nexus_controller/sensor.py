@@ -27,13 +27,22 @@ class NexusSensorDescription(SensorEntityDescription):
     config_key: str
 
 
+MEASUREMENT_KEYS = frozenset(
+    {
+        "cycles_today",
+        "demand_forecast_now",
+        "demand_temp_forecast",
+        "demand_temp_actual",
+    }
+)
+
 SENSORS = tuple(
     NexusSensorDescription(
         key=key,
         translation_key=translation_key,
         native_unit_of_measurement=unit,
         suggested_display_precision=ENTITY_PRECISION.get(key),
-        state_class=SensorStateClass.MEASUREMENT if key == "cycles_today" else None,
+        state_class=SensorStateClass.MEASUREMENT if key in MEASUREMENT_KEYS else None,
         config_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
         has_entity_name=True,

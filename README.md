@@ -199,7 +199,12 @@ in the background every 15 minutes; cached forecasts expire after two hours.
 
 The **Consumption forecast next 24 hours** and **Heat-pump forecast next 24 hours** sensors
 expose kWh totals plus 96 timestamped `slots` with `baseline_w`, `heatpump_w`, `total_w`,
-`temperature_c`, and `history_days`. These are diagnostics only: neither the battery
+`temperature_c`, and `history_days`. Three additional sensors record the moment-by-moment
+view in the Recorder, so Home Assistant history shows the past days: **Consumption
+forecast now** (W, the slot forecast as it stood at each moment; 0 while the baseline is
+still learning), **Temperature forecast** (°C, interpolated from the weather forecast)
+and **Actual temperature** (°C, from the weather entity's current reading). These are
+diagnostics only: neither the battery
 planner nor the live controller uses them. There is no automatic CSV or Recorder-history
 import; the integration starts learning after these inputs are configured.
 
@@ -221,7 +226,12 @@ installation, not a general heat-pump model. Temperatures outside the observed
 morning recovery, hot water, and defrost are not explicitly modelled.
 
 An [ApexCharts card YAML](dashboard_demand.yaml) plots baseline, heat pump, total demand,
-and temperature. Install ApexCharts Card through HACS and replace all four placeholder
+and temperature. A second [example card](dashboard_history.yaml) shows the past 48 hours
+with the forecast as it was made over time, the actual house power, and both the forecast
+and actual outside temperature; it relies on the three recorded now-sensors and the
+configured house power sensor. Install ApexCharts Card through HACS and replace the
+placeholder entity references with the real entity IDs.
+Install ApexCharts Card through HACS and replace all four placeholder
 entity references with the actual **Heat-pump forecast next 24 hours** sensor ID.
 Using that entity allows the heat-pump graph to appear while the household baseline
 is still learning. Missing values remain `null`, not zero. The normal history graph

@@ -102,7 +102,10 @@
       "powersave_status": {"name": "Inverter powersave status"},
       "experimental_quarter_plan": {"name": "Quarter-hour plan"},
       "demand_forecast": {"name": "Consumption forecast next 24 hours"},
-      "heatpump_forecast": {"name": "Heat-pump forecast next 24 hours"}
+      "heatpump_forecast": {"name": "Heat-pump forecast next 24 hours"},
+      "demand_forecast_now": {"name": "Consumption forecast now"},
+      "demand_temp_forecast": {"name": "Temperature forecast"},
+      "demand_temp_actual": {"name": "Actual temperature"}
     },
     "number": {
       "powersave_cooldown_min": {"name": "Inverter powersave cooldown"},

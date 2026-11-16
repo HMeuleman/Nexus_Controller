@@ -102,7 +102,10 @@
       "powersave_status": {"name": "Omvormer energiebesparing status"},
       "experimental_quarter_plan": {"name": "Kwartierplan"},
       "demand_forecast": {"name": "Verbruiksverwachting komende 24 uur"},
-      "heatpump_forecast": {"name": "Warmtepompverwachting komende 24 uur"}
+      "heatpump_forecast": {"name": "Warmtepompverwachting komende 24 uur"},
+      "demand_forecast_now": {"name": "Verbruiksverwachting nu"},
+      "demand_temp_forecast": {"name": "Temperatuurverwachting"},
+      "demand_temp_actual": {"name": "Werkelijke temperatuur"}
     },
     "number": {
       "powersave_cooldown_min": {"name": "Omvormer energiebesparing wachttijd"},
