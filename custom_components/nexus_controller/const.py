@@ -24,7 +24,7 @@ CONF_DISCHARGE_ENABLE: Final = "discharge_enable_entity"
 CONF_DISCHARGE_POWER: Final = "discharge_power_entity"
 CONF_INVERTER_POWER: Final = "inverter_power_entity"
 CONF_FUSE_LIMIT: Final = "fuse_limit_amps"
-CONF_HOUSE_ENERGY: Final = "house_energy_entity"
+CONF_HOUSE_POWER: Final = "house_power_entity"
 CONF_HEATPUMP_POWER: Final = "heatpump_power_entity"
 CONF_DEMAND_WEATHER: Final = "demand_weather_entity"
 

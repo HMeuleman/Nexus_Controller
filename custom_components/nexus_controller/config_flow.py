@@ -22,7 +22,7 @@ from .const import (
     CONF_GRID_POWER_L2,
     CONF_GRID_POWER_L3,
     CONF_HEATPUMP_POWER,
-    CONF_HOUSE_ENERGY,
+    CONF_HOUSE_POWER,
     CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
@@ -106,7 +106,7 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         CONF_SOLAR_FORECAST,
         CONF_SOLAR_HOURLY_TODAY,
         CONF_SOLAR_HOURLY_TOMORROW,
-        CONF_HOUSE_ENERGY,
+        CONF_HOUSE_POWER,
         CONF_HEATPUMP_POWER,
     ):
         if key in defaults and defaults[key]:
@@ -197,7 +197,7 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_SOLAR_HOURLY_TODAY,
                 CONF_SOLAR_HOURLY_TOMORROW,
                 CONF_INVERTER_POWER,
-                CONF_HOUSE_ENERGY,
+                CONF_HOUSE_POWER,
                 CONF_HEATPUMP_POWER,
                 CONF_DEMAND_WEATHER,
             ):

@@ -14,7 +14,7 @@ from custom_components.nexus_controller.config_flow import _config_schema
 from custom_components.nexus_controller.const import (
     CONF_DEMAND_WEATHER,
     CONF_HEATPUMP_POWER,
-    CONF_HOUSE_ENERGY,
+    CONF_HOUSE_POWER,
 )
 from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.demand import (
@@ -24,22 +24,20 @@ from custom_components.nexus_controller.demand import (
 )
 
 
-def test_quarter_counter_snapshots_remove_heatpump_and_ignore_negative_spike():
+def test_quarter_power_samples_remove_heatpump_and_ignore_negative_spike():
     history = DemandHistory()
     start = datetime(2026, 11, 10, 12, tzinfo=UTC)
     for seconds in range(0, 901, 10):
-        energy = 10 + seconds / 3600 * 2
-        history.observe(
-            start + timedelta(seconds=seconds), -80000 if seconds == 30 else energy, 1000, UTC
-        )
-    assert history.days["2026-11-10"]["48"] == pytest.approx(0.25)
+        house_w = -80000 if seconds == 30 else 2000
+        history.observe(start + timedelta(seconds=seconds), house_w, 1000, UTC)
+    assert history.days["2026-11-10"]["48"] == pytest.approx(1000)
 
 
-def test_counter_reset_inside_quarter_is_not_consumption():
+def test_quarter_without_valid_heatpump_samples_is_rejected():
     history = DemandHistory()
     start = datetime(2026, 11, 10, 12, tzinfo=UTC)
     for seconds in range(0, 901, 10):
-        history.observe(start + timedelta(seconds=seconds), 10 if seconds < 450 else 0, 0, UTC)
+        history.observe(start + timedelta(seconds=seconds), 2000, None, UTC)
     assert history.days == {}
     assert history.rejected_quarters == 1
 
@@ -59,12 +57,13 @@ def test_forecast_uses_previous_days_and_excludes_today():
     history = DemandHistory()
     history.restore(
         {
+            "unit": "w",
             "days": {
-                "2026-11-07": {str(index): 0.25 for index in range(96)},
-                "2026-11-08": {str(index): 0.25 for index in range(96)},
-                "2026-11-09": {str(index): 0.25 for index in range(96)},
-                "2026-11-10": {"24": 99},
-            }
+                "2026-11-07": {str(index): 1000.0 for index in range(96)},
+                "2026-11-08": {str(index): 1000.0 for index in range(96)},
+                "2026-11-09": {str(index): 1000.0 for index in range(96)},
+                "2026-11-10": {"24": 99_000},
+            },
         }
     )
     now = datetime(2026, 11, 10, 6, tzinfo=UTC)
@@ -99,22 +98,27 @@ def test_missing_samples_and_restarts_do_not_become_zero_load():
     history = DemandHistory()
     start = datetime(2026, 11, 10, 12, tzinfo=UTC)
     for seconds in (0, 10, 20, 850, 860, 870, 900):
-        history.observe(start + timedelta(seconds=seconds), 10 + seconds / 3600, 0, UTC)
+        history.observe(start + timedelta(seconds=seconds), 500.0, 0, UTC)
     assert history.days == {}
     restored = DemandHistory()
     restored.restore(history.as_dict())
     assert restored.days == {}
-    assert restored._last is None
+    assert restored._last_house is None
 
 
-def test_midnight_counter_reset_does_not_create_spike():
+def test_quarters_are_learned_across_midnight():
     history = DemandHistory()
     start = datetime(2026, 11, 10, 23, 45, tzinfo=UTC)
     for seconds in range(0, 1801, 10):
-        counter = 40 + seconds / 3600 if seconds < 900 else (seconds - 900) / 3600
-        history.observe(start + timedelta(seconds=seconds), counter, 0, UTC)
-    assert history.days["2026-11-10"]["95"] == pytest.approx(0.25)
-    assert history.days["2026-11-11"]["0"] == pytest.approx(0.25)
+        history.observe(start + timedelta(seconds=seconds), 500.0, 0, UTC)
+    assert history.days["2026-11-10"]["95"] == pytest.approx(500.0)
+    assert history.days["2026-11-11"]["0"] == pytest.approx(500.0)
+
+
+def test_stored_counters_from_older_versions_are_not_read_as_watts():
+    history = DemandHistory()
+    history.restore({"days": {"2026-11-09": {"0": 0.25}}, "rejected_quarters": 0})
+    assert history.days == {}
 
 
 def test_dst_fold_quarter_is_not_learned_and_forecast_is_96_real_quarters():
@@ -122,7 +126,7 @@ def test_dst_fold_quarter_is_not_learned_and_forecast_is_96_real_quarters():
     history = DemandHistory()
     start = datetime(2026, 10, 25, 0, tzinfo=UTC)
     for seconds in range(0, 901, 10):
-        history.observe(start + timedelta(seconds=seconds), seconds / 3600, 0, zone)
+        history.observe(start + timedelta(seconds=seconds), 1000.0, 0, zone)
     assert history.days == {}
     slots = history.forecast(start, [], zone)["slots"]
     times = [datetime.fromisoformat(slot["start"]) for slot in slots]
@@ -142,7 +146,7 @@ def test_forecast_does_not_interpolate_across_missing_weather_hour():
 def test_optional_inputs_and_apexcharts_attribute_contract():
     schema = _config_schema()
     keys = {key.schema for key in schema.schema}
-    assert {CONF_HOUSE_ENERGY, CONF_HEATPUMP_POWER, CONF_DEMAND_WEATHER} <= keys
+    assert {CONF_HOUSE_POWER, CONF_HEATPUMP_POWER, CONF_DEMAND_WEATHER} <= keys
     card = yaml.safe_load((Path(__file__).parents[1] / "dashboard_demand.yaml").read_text())
     assert card["type"] == "custom:apexcharts-card"
     for series, field in zip(
@@ -221,8 +225,8 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
     async def scenario():
         now = datetime(2026, 11, 10, 6, tzinfo=UTC)
         states = {
-            "sensor.energy": SimpleNamespace(
-                state="1000", attributes={"unit_of_measurement": "Wh"}
+            "sensor.power": SimpleNamespace(
+                state="2.0", attributes={"unit_of_measurement": "kW"}
             ),
             "sensor.heat": SimpleNamespace(state="1.5", attributes={"unit_of_measurement": "kW"}),
         }
@@ -231,7 +235,7 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         history.observe = MagicMock(wraps=original_observe)
         weather = AsyncMock()
         coordinator = SimpleNamespace(
-            _demand_sources=lambda: ["sensor.energy", "sensor.heat"],
+            _demand_sources=lambda: ["sensor.power", "sensor.heat"],
             configured_entity_id=lambda key: "weather.selected",
             hass=SimpleNamespace(
                 states=SimpleNamespace(get=states.get),
@@ -250,7 +254,7 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         )
         data = {}
         NexusCoordinator._update_demand_forecast(coordinator, data, now)
-        history.observe.assert_called_once_with(now, 1.0, 1500.0, ZoneInfo("Europe/Amsterdam"))
+        history.observe.assert_called_once_with(now, 2000.0, 1500.0, ZoneInfo("Europe/Amsterdam"))
         weather.assert_not_awaited()
         await coordinator._demand_task
         NexusCoordinator._update_demand_forecast(coordinator, data, now + timedelta(seconds=10))

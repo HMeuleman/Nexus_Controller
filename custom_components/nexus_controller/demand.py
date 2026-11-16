@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from datetime import UTC, datetime, timedelta, tzinfo
-from statistics import mean, median
+from statistics import mean
 
 HISTORY_DAYS = 7
 MIN_PROFILE_DAYS = 3
@@ -51,26 +51,33 @@ def heatpump_power(temperature_c: float, local_time: datetime) -> float:
 
 
 class DemandHistory:
-    """Learn non-heat-pump energy per local quarter from a daily kWh counter."""
+    """Learn non-heat-pump power per local quarter from a measured power sensor."""
 
     def __init__(self) -> None:
         self.days: dict[str, dict[str, float]] = {}
         self._quarter: datetime | None = None
-        self._samples: list[tuple[datetime, float]] = []
-        self._last: tuple[datetime, float] | None = None
-        self._last_observed: datetime | None = None
+        self._house_wh = 0.0
         self._heat_kwh = 0.0
         self._coverage_s = 0.0
+        self._last_house: tuple[datetime, float] | None = None
+        self._last_heat: tuple[datetime, float] | None = None
+        self._last_observed: datetime | None = None
         self.rejected_quarters = 0
 
     def as_dict(self) -> dict:
         """Persist complete quarters only; never bridge an integration restart."""
-        return {"days": self.days, "rejected_quarters": self.rejected_quarters}
+        return {
+            "unit": "w",
+            "days": self.days,
+            "rejected_quarters": self.rejected_quarters,
+        }
 
     def restore(self, raw: object) -> None:
-        """Reject corrupt stored values without preventing integration startup."""
+        """Reject corrupt or foreign-unit stored values without preventing startup."""
         self.days = {}
-        if not isinstance(raw, dict) or not isinstance(raw.get("days"), dict):
+        if not isinstance(raw, dict) or raw.get("unit") != "w":
+            return
+        if not isinstance(raw.get("days"), dict):
             return
         for day, slots in raw["days"].items():
             try:
@@ -92,72 +99,65 @@ class DemandHistory:
             return
         local = self._quarter.astimezone(timezone)
         unambiguous = local.utcoffset() == local.replace(fold=1 - local.fold).utcoffset()
-        first = [
-            (stamp.timestamp(), value)
-            for stamp, value in self._samples
-            if (stamp - self._quarter).total_seconds() <= 60
-        ]
-        last = [
-            (stamp.timestamp(), value)
-            for stamp, value in self._samples
-            if (stamp - self._quarter).total_seconds() >= 840
-        ]
         if (
             unambiguous
-            and len(first) >= 3
-            and len(last) >= 3
             and self._coverage_s >= MIN_COVERAGE_S
+            and self._last_house is not None
+            and self._last_heat is not None
         ):
-            duration = median(stamp for stamp, _ in last) - median(stamp for stamp, _ in first)
-            delta = median(value for _, value in last) - median(value for _, value in first)
-            if duration > 0 and delta >= 0:
-                house_kwh = delta * 900 / duration
-                heat_kwh = self._heat_kwh * 900 / self._coverage_s
-                if house_kwh >= heat_kwh:
-                    slot = str(local.hour * 4 + local.minute // 15)
-                    self.days.setdefault(local.date().isoformat(), {})[slot] = house_kwh - heat_kwh
-                    return
+            house_w = self._house_wh * 3600 / self._coverage_s
+            heat_w = self._heat_kwh * 3_600_000 / self._coverage_s
+            if house_w >= heat_w:
+                slot = str(local.hour * 4 + local.minute // 15)
+                self.days.setdefault(local.date().isoformat(), {})[slot] = house_w - heat_w
+                return
         self.rejected_quarters += 1
 
     def observe(
-        self, now: datetime, energy_kwh: float | None, heatpump_w: float | None, timezone: tzinfo
+        self, now: datetime, house_w: float | None, heatpump_w: float | None, timezone: tzinfo
     ) -> None:
-        """Accumulate bounded, time-weighted samples and ignore counter-reset spikes."""
+        """Accumulate time-weighted mean powers; unusable samples just end them."""
         now = now.astimezone(UTC)
         if self._last_observed is not None and now <= self._last_observed:
             return
         self._last_observed = now
         quarter = now.replace(minute=now.minute // 15 * 15, second=0, microsecond=0)
-        valid_power = finite_number(heatpump_w)
         if quarter != self._quarter:
-            if self._last is not None and self._quarter is not None:
-                remaining = (self._quarter + timedelta(minutes=15) - self._last[0]).total_seconds()
+            if self._quarter is not None and self._last_house is not None:
+                since_last = (now - self._last_house[0]).total_seconds()
+                quarter_end = self._quarter + timedelta(minutes=15)
+                to_end = (quarter_end - self._last_house[0]).total_seconds()
                 if (
-                    (now - self._last[0]).total_seconds() <= MAX_SAMPLE_GAP_S
-                    and valid_power is not None
-                    and valid_power >= 0
+                    self._last_heat is not None
+                    and 0 < to_end <= since_last <= MAX_SAMPLE_GAP_S
                 ):
-                    self._heat_kwh += self._last[1] * remaining / 3_600_000
-                    self._coverage_s += remaining
-            self._finish(timezone)
+                    self._house_wh += self._last_house[1] * to_end / 3600
+                    self._heat_kwh += self._last_heat[1] * to_end / 3_600_000
+                    self._coverage_s += to_end
+                self._finish(timezone)
             self._quarter = quarter
-            self._samples = []
-            self._heat_kwh = self._coverage_s = 0.0
-            self._last = None
+            self._house_wh = 0.0
+            self._heat_kwh = 0.0
+            self._coverage_s = 0.0
+            self._last_house = self._last_heat = None
         cutoff = (now.astimezone(timezone).date() - timedelta(days=HISTORY_DAYS)).isoformat()
         self.days = {day: slots for day, slots in self.days.items() if day >= cutoff}
-        energy = finite_number(energy_kwh)
-        if energy is not None and energy >= 0:
-            self._samples.append((now, energy))
-        if valid_power is None or valid_power < 0:
-            self._last = None
-            return
-        if self._last is not None:
-            elapsed = (now - self._last[0]).total_seconds()
+        valid_house = finite_number(house_w)
+        valid_heat = finite_number(heatpump_w)
+        if valid_house is not None and valid_house < 0:
+            valid_house = None
+        if valid_heat is not None and valid_heat < 0:
+            valid_heat = None
+        if valid_house is not None and valid_heat is not None and self._last_house is not None:
+            elapsed = (now - self._last_house[0]).total_seconds()
             if 0 < elapsed <= MAX_SAMPLE_GAP_S:
-                self._heat_kwh += (self._last[1] + valid_power) / 2 * elapsed / 3_600_000
+                house = (self._last_house[1] + valid_house) / 2
+                heat = (self._last_heat[1] + valid_heat) / 2
+                self._house_wh += house * elapsed / 3600
+                self._heat_kwh += heat * elapsed / 3_600_000
                 self._coverage_s += elapsed
-        self._last = (now, valid_power)
+        self._last_house = (now, valid_house) if valid_house is not None else None
+        self._last_heat = (now, valid_heat) if valid_heat is not None else None
 
     def forecast(
         self, now: datetime, temperatures: list[tuple[datetime, float]], timezone: tzinfo
@@ -179,7 +179,7 @@ class DemandHistory:
                 for offset in range(1, HISTORY_DAYS + 1)
             ]
             values = [value for value in history if value is not None]
-            baseline = mean(values) * 4000 if len(values) >= MIN_PROFILE_DAYS else None
+            baseline = mean(values) if len(values) >= MIN_PROFILE_DAYS else None
             midpoint = start + timedelta(minutes=7, seconds=30)
             position = bisect_right(times, midpoint.timestamp())
             temperature = None

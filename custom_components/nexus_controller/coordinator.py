@@ -36,7 +36,7 @@ from .const import (
     CONF_FUSE_LIMIT,
     CONF_GRID_POWER_L1,
     CONF_HEATPUMP_POWER,
-    CONF_HOUSE_ENERGY,
+    CONF_HOUSE_POWER,
     CONF_INVERTER_POWER,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
@@ -512,7 +512,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
 
     def _demand_sources(self) -> list[str | None]:
         """Keep learned energy profiles tied to the selected measurement sources."""
-        return [self.configured_entity_id(key) for key in (CONF_HOUSE_ENERGY, CONF_HEATPUMP_POWER)]
+        return [self.configured_entity_id(key) for key in (CONF_HOUSE_POWER, CONF_HEATPUMP_POWER)]
 
     def _demand_data(self) -> dict:
         return {**self._demand_history.as_dict(), "sources": self._demand_sources()}
@@ -520,17 +520,16 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
     def _update_demand_forecast(self, data: dict, now: datetime) -> None:
         """Collect optional diagnostics only, after the battery control step."""
         data["demand_forecast"] = data["heatpump_forecast"] = None
-        energy_id, power_id = self._demand_sources()
+        house_id, power_id = self._demand_sources()
         weather_id = self.configured_entity_id(CONF_DEMAND_WEATHER)
-        if not energy_id or not power_id or not weather_id:
+        if not house_id or not power_id or not weather_id:
             self.demand_details = {"status": "not_configured", "diagnostic_only": True, "slots": []}
             return
-        energy = self.hass.states.get(energy_id)
+        house = self.hass.states.get(house_id)
         power = self.hass.states.get(power_id)
-        energy_kwh = parse_energy_kwh(
-            energy.state if energy is not None else None,
-            energy.attributes.get("unit_of_measurement") if energy is not None else None,
-        )
+        house_w = sum_power_states([
+            (house.state, house.attributes.get("unit_of_measurement"))
+        ]) if house is not None else None
         power_w = sum_power_states([
             (power.state, power.attributes.get("unit_of_measurement"))
         ]) if power is not None else None
@@ -540,7 +539,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 "status": "invalid_timezone", "diagnostic_only": True, "slots": []
             }
             return
-        self._demand_history.observe(now, energy_kwh, power_w, timezone)
+        self._demand_history.observe(now, house_w, power_w, timezone)
         self._demand_store.async_delay_save(self._demand_data, 60)
         if (
             (self._demand_task is None or self._demand_task.done())
@@ -565,7 +564,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 self._demand_weather_updated.isoformat() if self._demand_weather_updated else None
             ),
             input_status=(
-                "ok" if energy_kwh is not None and power_w is not None else "inputs_unavailable"
+                "ok" if house_w is not None and power_w is not None else "inputs_unavailable"
             ),
             model="provisional_temperature_curve_2026_11",
             heatpump_schedule="06:00-23:00 local time",

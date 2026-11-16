@@ -190,9 +190,10 @@ Solar-only charging is considered only when paired with a profitable discharge w
 
 ## Diagnostic Consumption Forecast
 
-Select the optional daily household energy counter, heat-pump electrical power sensor,
-and hourly forecast weather entity in the integration's configuration. The counter must
-include heat-pump use but exclude battery charging. Units are read from the selected
+Select the optional household power sensor, heat-pump electrical power sensor,
+and hourly forecast weather entity in the integration's configuration. The power
+sensor must report the electric power of the house (W/kW); it must include
+heat-pump use but exclude battery charging. Units are read from the selected
 entities; IDs are never auto-selected. Weather is requested through `weather.get_forecasts`
 in the background every 15 minutes; cached forecasts expire after two hours.
 
@@ -204,11 +205,13 @@ import; the integration starts learning after these inputs are configured.
 
 The household baseline averages each local quarter over the preceding seven days,
 excluding today, and requires at least three observed days per quarter. Measured
-heat-pump energy is subtracted before averaging. Counter snapshots use median readings
-near each quarter's ends, not a sum of positive sample changes. Negative readings,
-reset quarters, incomplete intervals, and intervals with heat-pump energy exceeding
-household energy are discarded. Restart gaps are not filled. Ambiguous autumn DST
-quarters are excluded from learning; the forecast itself uses real UTC quarter steps.
+heat-pump power is subtracted before averaging; the quarter baseline is the
+time-weighted mean of both sensors over the quarter. Quarters with too little fresh
+coverage (samples further apart than 120 s, or below 13.5 minutes of coverage),
+negative household readings, unavailable readings, and quarters where the heat pump
+exceeds the household power are discarded. Restart gaps are not filled. Ambiguous
+autumn DST quarters are excluded from learning; the forecast itself uses real UTC
+quarter steps.
 
 Heat-pump estimates use the provisional curve fitted to the supplied September-November
 2026 data: `6.253 + 45.759 * max(0, 18 - T) + 168.532 * max(0, 8 - T)` W, during
