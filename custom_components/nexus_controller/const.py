@@ -27,6 +27,7 @@ CONF_FUSE_LIMIT: Final = "fuse_limit_amps"
 CONF_HOUSE_POWER: Final = "house_power_entity"
 CONF_HEATPUMP_POWER: Final = "heatpump_power_entity"
 CONF_DEMAND_WEATHER: Final = "demand_weather_entity"
+CONF_OUTDOOR_TEMP: Final = "outdoor_temp_entity"
 
 # Legacy config keys, only read to seed the new setting entities.
 LEGACY_PHASE_HEADROOM: Final = "phase_headroom_watts"

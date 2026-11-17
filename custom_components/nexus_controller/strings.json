@@ -25,6 +25,7 @@
           "house_power_entity": "Household power sensor (W/kW; includes heat pump, excludes battery charging; optional diagnostics)",
           "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
           "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
+          "outdoor_temp_entity": "Outdoor temperature sensor with history (°C/°F; more accurate than the weather entity; optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
@@ -62,6 +63,7 @@
           "house_power_entity": "Household power sensor (W/kW; includes heat pump, excludes battery charging; optional diagnostics)",
           "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
           "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
+          "outdoor_temp_entity": "Outdoor temperature sensor with history (°C/°F; more accurate than the weather entity; optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }

@@ -25,6 +25,7 @@
           "house_power_entity": "Vermogen woning (W/kW; inclusief warmtepomp, exclusief batterijladen; optionele diagnose)",
           "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
           "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
+          "outdoor_temp_entity": "Buitentemperatuursensor met historie (°C/°F; nauwkeuriger dan de weerentiteit; optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
@@ -62,6 +63,7 @@
           "house_power_entity": "Vermogen woning (W/kW; inclusief warmtepomp, exclusief batterijladen; optionele diagnose)",
           "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
           "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
+          "outdoor_temp_entity": "Buitentemperatuursensor met historie (°C/°F; nauwkeuriger dan de weerentiteit; optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }

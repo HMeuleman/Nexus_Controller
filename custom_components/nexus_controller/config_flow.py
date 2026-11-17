@@ -24,6 +24,7 @@ from .const import (
     CONF_HEATPUMP_POWER,
     CONF_HOUSE_POWER,
     CONF_INVERTER_POWER,
+    CONF_OUTDOOR_TEMP,
     CONF_PRICE_FORECAST,
     CONF_SOLAR_FORECAST,
     CONF_SOLAR_HOURLY_TODAY,
@@ -108,6 +109,7 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         CONF_SOLAR_HOURLY_TOMORROW,
         CONF_HOUSE_POWER,
         CONF_HEATPUMP_POWER,
+        CONF_OUTDOOR_TEMP,
     ):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
@@ -199,6 +201,7 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_INVERTER_POWER,
                 CONF_HOUSE_POWER,
                 CONF_HEATPUMP_POWER,
+                CONF_OUTDOOR_TEMP,
                 CONF_DEMAND_WEATHER,
             ):
                 user_input.setdefault(key, None)
