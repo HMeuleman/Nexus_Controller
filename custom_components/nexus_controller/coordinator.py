@@ -620,15 +620,32 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if not house_id or timezone is None:
             return
         stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
-        stats = await get_instance(self.hass).async_add_executor_job(
-            statistics_during_period,
-            dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1),
-            None,
-            stat_ids,
-            "5minute",
-            None,
-            {"mean"},
-        )
+        start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
+
+        def query() -> dict[str, list[dict[str, object]]]:
+            # Bind by keyword: newer Home Assistant reorders or drops the
+            # positional units argument between statistic_ids and types.
+            try:
+                return statistics_during_period(
+                    self.hass,  # type: ignore[arg-type]
+                    start,
+                    None,
+                    stat_ids,  # type: ignore[arg-type]
+                    period="5minute",
+                    units=None,
+                    types={"mean"},
+                )
+            except TypeError:
+                return statistics_during_period(
+                    self.hass,  # type: ignore[arg-type]
+                    start,
+                    None,
+                    stat_ids,  # type: ignore[arg-type]
+                    period="5minute",
+                    types={"mean"},
+                )
+
+        stats = await get_instance(self.hass).async_add_executor_job(query)
 
         def series(entity_id: str) -> list[tuple[datetime, float]]:
             rows = stats.get(entity_id) or []
