@@ -719,8 +719,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 entry = meta.get(entity_id)
                 if isinstance(entry, tuple) and len(entry) == 2:
                     entry = entry[1]
-                unit = entry.get("unit") if isinstance(entry, dict) else None
-                return unit or ""
+                unit = (
+                    entry.get("unit_of_measurement")
+                    if isinstance(entry, dict)
+                    else None
+                )
+                return str(unit) if unit else ""
 
             def series(entity_id: str) -> list[tuple[datetime, float]]:
                 rows = stats.get(entity_id) or []

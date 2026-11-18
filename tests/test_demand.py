@@ -508,7 +508,8 @@ def _backfill_coordinator(monkeypatch, stats, unit_by_entity):
         coordinator_module,
         "get_metadata",
         lambda hass, statistic_ids: {
-            entity_id: (1, {"unit": unit}) for entity_id, unit in unit_by_entity.items()
+            entity_id: (1, {"unit_of_measurement": unit})
+            for entity_id, unit in unit_by_entity.items()
         },
     )
     monkeypatch.setattr(
@@ -668,7 +669,7 @@ def test_startup_backfill_retries_when_recorder_is_not_ready_yet(monkeypatch):
     monkeypatch.setattr(
         coordinator_module,
         "get_metadata",
-        lambda hass, statistic_ids: {"sensor.power": (1, {"unit": "kW"})},
+        lambda hass, statistic_ids: {"sensor.power": (1, {"unit_of_measurement": "kW"})},
     )
     monkeypatch.setattr(
         coordinator_module,
