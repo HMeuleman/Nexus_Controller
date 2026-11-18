@@ -678,6 +678,18 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 return
 
             meta = await instance.async_add_executor_job(metadata)
+            missing = [
+                entity_id
+                for entity_id in sorted(stat_ids)
+                if entity_id not in meta
+            ]
+            if missing:
+                _LOGGER.warning(
+                    "Demand history backfill: the recorder keeps no mean statistics for %s; "
+                    "until their statistics are repaired (unit and state_class on the entity), "
+                    "these inputs cannot be learned",
+                    ", ".join(missing),
+                )
 
             def unit_of(entity_id: str) -> str:
                 entry = meta.get(entity_id)
