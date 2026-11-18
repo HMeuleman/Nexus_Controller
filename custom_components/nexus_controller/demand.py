@@ -20,7 +20,9 @@ _LOGGER = logging.getLogger(__name__)
 
 HISTORY_DAYS = 7
 MIN_PROFILE_DAYS = 3
-MAX_SAMPLE_GAP_S = 120.0
+# Live power sensors are often polled on ~5-minute cadences; anything wider
+# than 6.5 minutes breaks the stream instead of counting as coverage.
+MAX_SAMPLE_GAP_S = 390.0
 # Backfill buckets are 5-minute statistics means; tolerate one lost bucket.
 BACKFILL_MAX_GAP_S = 720.0
 MIN_COVERAGE_S = 810.0
