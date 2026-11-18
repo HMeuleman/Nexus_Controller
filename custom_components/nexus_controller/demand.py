@@ -177,7 +177,12 @@ class DemandHistory:
             self.rejected_quarters = rejected
 
     def _prune(self, now: datetime, timezone: tzinfo) -> None:
-        cutoff = (now.astimezone(timezone).date() - timedelta(days=HISTORY_DAYS)).isoformat()
+        # Two days of slack over the learn window: during the startup backfill
+        # the oldest sample is HISTORY_DAYS + 1 old, so a HISTORY_DAYS cutoff
+        # would erase each oldest day right after it was learned.
+        cutoff = (
+            now.astimezone(timezone).date() - timedelta(days=HISTORY_DAYS + 2)
+        ).isoformat()
         self.days = {day: slots for day, slots in self.days.items() if day >= cutoff}
         self.wp_days = {day: slots for day, slots in self.wp_days.items() if day >= cutoff}
         self.temp_days = {day: slots for day, slots in self.temp_days.items() if day >= cutoff}
@@ -220,10 +225,6 @@ class DemandHistory:
             else:
                 self._temp_deg_s += last[1] * seconds
                 self._temp_cov += seconds
-        local = self._quarter.astimezone(timezone)
-        unambiguous = local.utcoffset() == local.replace(fold=1 - local.fold).utcoffset()
-        house_w = self._house_wh * 3600 / self._house_cov if self._house_cov else None
-        wp_w = self._wp_wh * 3600 / self._wp_cov if self._wp_cov else None
         local = self._quarter.astimezone(timezone)
         unambiguous = local.utcoffset() == local.replace(fold=1 - local.fold).utcoffset()
         house_w = self._house_wh * 3600 / self._house_cov if self._house_cov else None
@@ -284,6 +285,16 @@ class DemandHistory:
             return
         if self._temp_cov > 0:
             self.temp_days.setdefault(day, {})[slot] = self._temp_deg_s / self._temp_cov
+        _LOGGER.debug(
+            "Demand quarter %s %s learned: house_w=%.1f wp_w=%s "
+            "(house_cov=%.0fs wp_cov=%.0fs)",
+            day,
+            slot,
+            house_w,
+            wp_w,
+            house_measured,
+            wp_measured,
+        )
 
     def _process(
         self,
