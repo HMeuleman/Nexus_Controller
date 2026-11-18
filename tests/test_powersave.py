@@ -737,6 +737,10 @@ def test_restart_restores_last_maintenance_deadline(monkeypatch):
         _demand_store=SimpleNamespace(async_load=AsyncMock(return_value=None)),
         _powersave_data=lambda: {},
         configured_entity_id=lambda key: None,
+        hass=SimpleNamespace(
+            async_create_task=MagicMock(side_effect=lambda coro: coro.close())
+        ),
+        _async_demand_backfill=AsyncMock(),
     )
 
     asyncio.run(NexusCoordinator.async_setup(coordinator))

@@ -10,7 +10,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.components.recorder.statistics import (
+    get_metadata,
+    statistics_during_period,
+)
 from homeassistant.components.recorder.util import get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
@@ -179,6 +182,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "status": "not_configured", "diagnostic_only": True, "slots": []
         }
         self._demand_task: asyncio.Task | None = None
+        self._demand_backfill_task: asyncio.Task | None = None
         self._demand_weather_attempt: datetime | None = None
         self._demand_weather_updated: datetime | None = None
         self._demand_temperatures: list[tuple[datetime, float]] = []
@@ -235,10 +239,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         demand = await self._demand_store.async_load()
         if isinstance(demand, dict) and demand.get("sources") == self._demand_sources():
             self._demand_history.restore(demand)
-        try:
-            await self._async_demand_backfill()
-        except Exception as err:  # diagnostics only; never block integration setup
-            _LOGGER.warning("Rebuilding demand history from recorder failed: %s", err)
+        self._demand_backfill_task = self.hass.async_create_task(self._async_demand_backfill())
         saved = await self._powersave_store.async_load()
         now_s = time.monotonic()
         now_wall = dt_util.utcnow().timestamp()
@@ -291,14 +292,15 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 await self._quarter_task
             except asyncio.CancelledError:
                 pass
+        for task in (self._demand_backfill_task, self._demand_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         if self._control_was_on:
             await self._async_release()
-        if self._demand_task is not None and not self._demand_task.done():
-            self._demand_task.cancel()
-            try:
-                await self._demand_task
-            except asyncio.CancelledError:
-                pass
         await self._demand_store.async_save(self._demand_data())
         if self.settings[SET_POWERSAVE_ENABLED] or self._powersave_wake_pending:
             await self._async_set_inverter_power(True)
@@ -614,18 +616,25 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         data["demand_temp_actual"] = temp_c
 
     async def _async_demand_backfill(self) -> None:
-        """Rebuild the retained demand window from recorder statistics at startup."""
-        house_id, power_id, outdoor_id = self._demand_sources()
-        timezone = dt_util.get_time_zone(self.hass.config.time_zone)
-        if not house_id or timezone is None:
-            return
-        stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
-        start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
+        """Rebuild the demand window from recorder statistics once sources are live.
 
-        def query() -> dict[str, list[dict[str, object]]]:
-            # Bind by keyword: newer Home Assistant reorders or drops the
-            # positional units argument between statistic_ids and types.
-            try:
+        Runs as a background task: during a Home Assistant start the recorder and
+        the entity states are not ready yet, so the query is retried until the
+        statistics appear. The result replaces the in-memory history in one step.
+        """
+        try:
+            house_id, power_id, outdoor_id = self._demand_sources()
+            timezone = dt_util.get_time_zone(self.hass.config.time_zone)
+            if not house_id:
+                _LOGGER.info("Demand history backfill skipped: no house power sensor")
+                return
+            if timezone is None:
+                _LOGGER.warning("Demand history backfill skipped: unknown local timezone")
+                return
+            stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
+            start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
+
+            def query() -> dict[str, list[dict[str, object]]]:
                 return statistics_during_period(
                     self.hass,  # type: ignore[arg-type]
                     start,
@@ -635,66 +644,114 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     units=None,
                     types={"mean"},
                 )
-            except TypeError:
-                return statistics_during_period(
-                    self.hass,  # type: ignore[arg-type]
-                    start,
-                    None,
-                    stat_ids,  # type: ignore[arg-type]
-                    period="5minute",
-                    types={"mean"},
+
+            def metadata() -> dict[str, tuple[int, dict]]:
+                return get_metadata(self.hass, statistic_ids=stat_ids)  # type: ignore[arg-type]
+
+            instance = get_instance(self.hass)
+            stats: dict = {}
+            for attempt in range(1, 7):
+                for _ in range(12):
+                    states = [self.hass.states.get(entity_id) for entity_id in stat_ids]
+                    if all(
+                        state is not None
+                        and state.state not in ("unknown", "unavailable")
+                        for state in states
+                    ):
+                        break
+                    await asyncio.sleep(5)
+                stats = await instance.async_add_executor_job(query)
+                if stats.get(house_id):
+                    break
+                if attempt < 6:
+                    _LOGGER.info(
+                        "Demand backfill attempt %d: no statistics yet for %s; retrying in 60 s",
+                        attempt,
+                        house_id,
+                    )
+                    await asyncio.sleep(60)
+            if not stats.get(house_id):
+                _LOGGER.warning(
+                    "Demand history backfill gave up: recorder has no statistics for %s",
+                    house_id,
                 )
+                return
 
-        stats = await get_instance(self.hass).async_add_executor_job(query)
+            meta = await instance.async_add_executor_job(metadata)
 
-        def series(entity_id: str) -> list[tuple[datetime, float]]:
-            rows = stats.get(entity_id) or []
-            points = []
-            for row in rows:
-                value = row.get("mean")
-                if value is None:
-                    continue
-                start = row.get("start")
-                if isinstance(start, datetime):
-                    stamp = start
-                else:
+            def unit_of(entity_id: str) -> str:
+                entry = meta.get(entity_id)
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    entry = entry[1]
+                unit = entry.get("unit") if isinstance(entry, dict) else None
+                return unit or ""
+
+            def series(entity_id: str) -> list[tuple[datetime, float]]:
+                rows = stats.get(entity_id) or []
+                points = []
+                for row in rows:
+                    value = row.get("mean")
+                    if value is None:
+                        continue
+                    row_start = row.get("start")
+                    if isinstance(row_start, datetime):
+                        stamp = row_start
+                    else:
+                        try:
+                            stamp = datetime.fromisoformat(str(row_start))
+                        except (TypeError, ValueError):
+                            continue
                     try:
-                        stamp = datetime.fromisoformat(str(start))
+                        points.append((stamp, float(value)))
                     except (TypeError, ValueError):
                         continue
-                try:
-                    points.append((stamp, float(value)))
-                except (TypeError, ValueError):
-                    continue
-            return points
+                return points
 
-        factors = {}
-        for entity_id in stat_ids:
-            state = self.hass.states.get(entity_id)
-            unit = state.attributes.get("unit_of_measurement") if state else None
-            factors[entity_id] = 1000.0 if (unit or "").casefold() == "kw" else 1.0
-        wp = [(stamp, value * factors[power_id]) for stamp, value in series(power_id)] \
-            if power_id else []
-        temp = []
-        if outdoor_id:
-            state = self.hass.states.get(outdoor_id)
-            unit = (state.attributes.get("unit_of_measurement") if state else "") or ""
-            if unit.casefold() in ("°c", "°f"):
-                for stamp, value in series(outdoor_id):
-                    temp.append((stamp, (value - 32) / 1.8 if unit.casefold() == "°f" else value))
-            else:
-                _LOGGER.warning(
-                    "Outdoor temperature sensor %s has unsupported unit %s; "
-                    "temperature correction is skipped",
-                    outdoor_id,
-                    unit,
-                )
-        self._demand_history.backfill(
-            [(stamp, value * factors[house_id]) for stamp, value in series(house_id)],
-            wp or [],
-            temp,
-            timezone,
-        )
+            factors = {
+                entity_id: 1000.0 if unit_of(entity_id).casefold() == "kw" else 1.0
+                for entity_id in stat_ids
+            }
+            house_series = series(house_id)
+            wp_series = series(power_id) if power_id else []
+            temp: list[tuple[datetime, float]] = []
+            if outdoor_id:
+                unit = unit_of(outdoor_id).casefold()
+                if unit in ("°c", "°f"):
+                    for stamp, value in series(outdoor_id):
+                        temp.append(
+                            (stamp, (value - 32) / 1.8 if unit == "°f" else value)
+                        )
+                else:
+                    _LOGGER.warning(
+                        "Outdoor temperature sensor %s has unsupported statistics unit %s; "
+                        "temperature correction is skipped",
+                        outdoor_id,
+                        unit_of(outdoor_id),
+                    )
+            history = DemandHistory()
+            history.wp_configured = power_id is not None
+            history.backfill(
+                [(stamp, value * factors[house_id]) for stamp, value in house_series],
+                [(stamp, value * factors[power_id]) for stamp, value in wp_series],
+                temp,
+                timezone,
+            )
+            history.rejected_quarters += self._demand_history.rejected_quarters
+            self._demand_history = history
+            _LOGGER.info(
+                "Demand backfill: %d house, %d heat-pump, %d temperature points; "
+                "learned %d house days, %d heat-pump days, %d rejected quarters",
+                len(house_series),
+                len(wp_series),
+                len(temp),
+                len(history.days),
+                len(history.wp_days),
+                history.rejected_quarters,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # diagnostics only; never break the integration
+            _LOGGER.warning("Rebuilding demand history from recorder failed: %s", err)
 
     async def _async_demand_weather(self, weather_id: str) -> None:
         """Fetch forecasts without blocking or issuing any battery service calls."""

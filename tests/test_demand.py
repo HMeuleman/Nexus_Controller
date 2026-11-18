@@ -497,9 +497,31 @@ def test_coordinator_without_heatpump_uses_house_only_forecast():
     asyncio.run(scenario())
 
 
-def test_startup_backfill_rebuilds_quarters_from_recorder_statistics(monkeypatch):
+def _backfill_coordinator(monkeypatch, stats, unit_by_entity):
+    """Build a coordinator stub for _async_demand_backfill with mocked recorder."""
     from custom_components.nexus_controller import coordinator as coordinator_module
 
+    monkeypatch.setattr(
+        coordinator_module, "statistics_during_period", lambda *args, **kwargs: stats
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_metadata",
+        lambda hass, statistic_ids: {
+            entity_id: (1, {"unit": unit}) for entity_id, unit in unit_by_entity.items()
+        },
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_instance",
+        lambda hass: SimpleNamespace(
+            async_add_executor_job=AsyncMock(side_effect=lambda fn, *a: fn(*a))
+        ),
+    )
+    return coordinator_module
+
+
+def test_startup_backfill_rebuilds_quarters_from_recorder_statistics(monkeypatch):
     base = datetime(2026, 11, 10, 12, tzinfo=UTC)
     stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
     stats = {
@@ -507,112 +529,128 @@ def test_startup_backfill_rebuilds_quarters_from_recorder_statistics(monkeypatch
         "sensor.heat": [{"start": stamp, "mean": 0.5} for stamp in stamps],
         "sensor.temp": [{"start": stamp, "mean": 41.0} for stamp in stamps],
     }
-    monkeypatch.setattr(coordinator_module, "statistics_during_period", lambda *args: stats)
-    monkeypatch.setattr(
-        coordinator_module,
-        "get_instance",
-        lambda hass: SimpleNamespace(async_add_executor_job=AsyncMock(return_value=stats)),
-    )
-    history = DemandHistory()
-    history.wp_configured = True
+    units = {"sensor.power": "kW", "sensor.heat": "kW", "sensor.temp": "°C"}
+    _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", "sensor.heat", "sensor.temp"],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
-                    "sensor.power": SimpleNamespace(
-                        attributes={"unit_of_measurement": "kW"}
-                    ),
-                    "sensor.heat": SimpleNamespace(
-                        attributes={"unit_of_measurement": "kW"}
-                    ),
-                    "sensor.temp": SimpleNamespace(
-                        attributes={"unit_of_measurement": "°C"}
-                    ),
+                    "sensor.power": SimpleNamespace(state="2.0", attributes={}),
+                    "sensor.heat": SimpleNamespace(state="0.5", attributes={}),
+                    "sensor.temp": SimpleNamespace(state="20", attributes={}),
                 }.get(entity)
             ),
             config=SimpleNamespace(time_zone="Europe/Amsterdam"),
         ),
-        _demand_history=history,
+        _demand_history=DemandHistory(),
     )
     asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    history = coordinator._demand_history
     # 12:00 UTC is 13:00 local: slot 52 holds the first backfilled quarter.
     assert history.days["2026-11-10"]["52"] == pytest.approx(1500.0)
     assert history.wp_days["2026-11-10"]["52"] == pytest.approx(500.0)
     assert history.temp_days["2026-11-10"]["52"] == pytest.approx(41.0)
+    assert history.wp_configured is True
 
 
 def test_startup_backfill_converts_fahrenheit_outdoor_sensor(monkeypatch):
-    from custom_components.nexus_controller import coordinator as coordinator_module
-
     base = datetime(2026, 11, 10, 12, tzinfo=UTC)
     stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
     stats = {
         "sensor.power": [{"start": stamp, "mean": 1.0} for stamp in stamps],
         "sensor.temp": [{"start": stamp, "mean": 41.0} for stamp in stamps],
     }
-    monkeypatch.setattr(coordinator_module, "statistics_during_period", lambda *args: stats)
-    monkeypatch.setattr(
-        coordinator_module,
-        "get_instance",
-        lambda hass: SimpleNamespace(async_add_executor_job=AsyncMock(return_value=stats)),
-    )
-    history = DemandHistory()
+    units = {"sensor.power": "kW", "sensor.temp": "°F"}
+    _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, "sensor.temp"],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
-                    "sensor.power": SimpleNamespace(
-                        attributes={"unit_of_measurement": "kW"}
-                    ),
-                    "sensor.temp": SimpleNamespace(
-                        attributes={"unit_of_measurement": "°F"}
-                    ),
+                    "sensor.power": SimpleNamespace(state="1000", attributes={}),
+                    "sensor.temp": SimpleNamespace(state="5", attributes={}),
                 }.get(entity)
             ),
             config=SimpleNamespace(time_zone="Europe/Amsterdam"),
         ),
-        _demand_history=history,
+        _demand_history=DemandHistory(),
     )
     asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    history = coordinator._demand_history
     assert history.days["2026-11-10"]["52"] == pytest.approx(1000.0)
     assert history.temp_days["2026-11-10"]["52"] == pytest.approx(5.0)
 
 
 def test_startup_backfill_rejects_unsupported_temperature_unit(monkeypatch):
-    from custom_components.nexus_controller import coordinator as coordinator_module
-
     base = datetime(2026, 11, 10, 12, tzinfo=UTC)
     stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
     stats = {
         "sensor.power": [{"start": stamp, "mean": 1.0} for stamp in stamps],
         "sensor.temp": [{"start": stamp, "mean": 273.0} for stamp in stamps],
     }
-    monkeypatch.setattr(coordinator_module, "statistics_during_period", lambda *args: stats)
-    monkeypatch.setattr(
-        coordinator_module,
-        "get_instance",
-        lambda hass: SimpleNamespace(async_add_executor_job=AsyncMock(return_value=stats)),
-    )
-    history = DemandHistory()
+    units = {"sensor.power": "kW", "sensor.temp": "K"}
+    _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, "sensor.temp"],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
-                    "sensor.power": SimpleNamespace(
-                        attributes={"unit_of_measurement": "kW"}
-                    ),
-                    "sensor.temp": SimpleNamespace(
-                        attributes={"unit_of_measurement": "K"}
-                    ),
+                    "sensor.power": SimpleNamespace(state="1000", attributes={}),
+                    "sensor.temp": SimpleNamespace(state="273", attributes={}),
                 }.get(entity)
             ),
             config=SimpleNamespace(time_zone="Europe/Amsterdam"),
         ),
-        _demand_history=history,
+        _demand_history=DemandHistory(),
     )
     asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    history = coordinator._demand_history
     assert history.temp_days == {}
     assert history.days["2026-11-10"]["52"] == pytest.approx(1000.0)
+
+
+def test_startup_backfill_retries_when_recorder_is_not_ready_yet(monkeypatch):
+    import custom_components.nexus_controller.coordinator as coordinator_module
+
+    base = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
+    empty: dict = {}
+    full = {"sensor.power": [{"start": stamp, "mean": 1.0} for stamp in stamps]}
+    queries = [empty, empty, full]
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(coordinator_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        coordinator_module, "statistics_during_period", lambda *args, **kwargs: queries.pop(0)
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_metadata",
+        lambda hass, statistic_ids: {"sensor.power": (1, {"unit": "kW"})},
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_instance",
+        lambda hass: SimpleNamespace(
+            async_add_executor_job=AsyncMock(side_effect=lambda fn, *a: fn(*a))
+        ),
+    )
+    coordinator = SimpleNamespace(
+        _demand_sources=lambda: ["sensor.power", None, None],
+        hass=SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity: SimpleNamespace(state="1000", attributes={})
+                if entity == "sensor.power"
+                else None
+            ),
+            config=SimpleNamespace(time_zone="Europe/Amsterdam"),
+        ),
+        _demand_history=DemandHistory(),
+    )
+    asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    assert sleeps == [60, 60]
+    assert coordinator._demand_history.days["2026-11-10"]["52"] == pytest.approx(1000.0)
