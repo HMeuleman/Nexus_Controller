@@ -610,6 +610,44 @@ def test_startup_backfill_rejects_unsupported_temperature_unit(monkeypatch):
     assert history.days["2026-11-10"]["52"] == pytest.approx(1000.0)
 
 
+def test_startup_backfill_resolves_renamed_entities_through_the_registry(monkeypatch):
+    base = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
+    stats = {"sensor.current": [{"start": stamp, "mean": 2.0} for stamp in stamps]}
+    units = {"sensor.current": "kW"}
+    _backfill_coordinator(monkeypatch, stats, units)
+
+    class FakeRegistry:
+        def async_get(self, entity_id):
+            current = {"sensor.old_name": "sensor.current"}.get(entity_id, entity_id)
+            return SimpleNamespace(entity_id=current)
+
+    try:
+        from homeassistant.helpers import entity_registry as er_module
+
+        monkeypatch.setattr(
+            er_module, "async_get", lambda hass: FakeRegistry()
+        )
+        coordinator = SimpleNamespace(
+            _demand_sources=lambda: ["sensor.old_name", None, None],
+            hass=SimpleNamespace(
+                states=SimpleNamespace(
+                    get=lambda entity: {
+                    "sensor.old_name": SimpleNamespace(state="2.0", attributes={}),
+                    "sensor.current": SimpleNamespace(state="2.0", attributes={}),
+                }.get(entity)
+                ),
+                config=SimpleNamespace(time_zone="Europe/Amsterdam"),
+            ),
+            _demand_history=DemandHistory(),
+        )
+        asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+        # 2.0 kW mean over a 5-minute sample with no WP configured: 2000 W.
+        assert coordinator._demand_history.days["2026-11-10"]["52"] == pytest.approx(2000.0)
+    finally:
+        monkeypatch.undo()
+
+
 def test_startup_backfill_retries_when_recorder_is_not_ready_yet(monkeypatch):
     import custom_components.nexus_controller.coordinator as coordinator_module
 

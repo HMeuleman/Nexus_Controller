@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import time
+import traceback
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -18,6 +19,7 @@ from homeassistant.components.recorder.util import get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -632,6 +634,28 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 _LOGGER.warning("Demand history backfill skipped: unknown local timezone")
                 return
             stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
+            # Renamed or re-created entities leave stale ids in the stored options;
+            # resolve each one through the entity registry to its current id so the
+            # recorder statistics (keyed by the current id) are still found.
+            try:
+                registry = er.async_get(self.hass)
+            except (AttributeError, TypeError):
+                registry = None
+            if registry is not None:
+                def resolve(entity_id: str | None) -> str | None:
+                    if entity_id is None:
+                        return None
+                    entry = registry.async_get(entity_id)
+                    return entry.entity_id if entry is not None else entity_id
+
+                house_id = resolve(house_id)
+                power_id = resolve(power_id)
+                outdoor_id = resolve(outdoor_id)
+                stat_ids = {
+                    entity_id
+                    for entity_id in (house_id, power_id, outdoor_id)
+                    if entity_id
+                }
             start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
 
             def query() -> dict[str, list[dict[str, object]]]:
@@ -763,7 +787,11 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         except asyncio.CancelledError:
             raise
         except Exception as err:  # diagnostics only; never break the integration
-            _LOGGER.warning("Rebuilding demand history from recorder failed: %s", err)
+            _LOGGER.warning(
+                "Rebuilding demand history from recorder failed: %s\n%s",
+                err,
+                traceback.format_exc(),
+            )
 
     async def _async_demand_weather(self, weather_id: str) -> None:
         """Fetch forecasts without blocking or issuing any battery service calls."""

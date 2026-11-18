@@ -66,14 +66,14 @@ def parse_temperatures(forecast: object, unit: str) -> list[tuple[datetime, floa
     return sorted(points.items())
 
 
-def normalize_temperature(value: object, unit: str) -> float | None:
-    """Normalize a current temperature reading to Celsius."""
-    if unit not in ("°C", "°F"):
+def normalize_temperature(value: object, unit: str | None) -> float | None:
+    """Normalize a current temperature reading to Celsius (unit is case-insensitive)."""
+    if unit is None or unit.strip().casefold() not in ("°c", "°f"):
         return None
     number = finite_number(value)
     if number is None:
         return None
-    return (number - 32) / 1.8 if unit == "°F" else number
+    return (number - 32) / 1.8 if unit.strip().casefold() == "°f" else number
 
 
 def temperature_at(temperatures: list[tuple[datetime, float]], when: datetime) -> float | None:
