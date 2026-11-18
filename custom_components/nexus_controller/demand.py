@@ -10,10 +10,13 @@ period is required after configuration.
 
 from __future__ import annotations
 
+import logging
 import math
 from bisect import bisect_right
 from datetime import UTC, datetime, timedelta, tzinfo
 from statistics import mean
+
+_LOGGER = logging.getLogger(__name__)
 
 HISTORY_DAYS = 7
 MIN_PROFILE_DAYS = 3
@@ -113,6 +116,8 @@ class DemandHistory:
         self.temp_days: dict[str, dict[str, float]] = {}
         self.wp_configured = False
         self.rejected_quarters = 0
+        self.flush_reject_reason: str | None = None
+        self._last_logged_reject: str | None = None
         self._quarter: datetime | None = None
         self._last_observed: datetime | None = None
         self._house_wh = 0.0
@@ -219,6 +224,10 @@ class DemandHistory:
         unambiguous = local.utcoffset() == local.replace(fold=1 - local.fold).utcoffset()
         house_w = self._house_wh * 3600 / self._house_cov if self._house_cov else None
         wp_w = self._wp_wh * 3600 / self._wp_cov if self._wp_cov else None
+        local = self._quarter.astimezone(timezone)
+        unambiguous = local.utcoffset() == local.replace(fold=1 - local.fold).utcoffset()
+        house_w = self._house_wh * 3600 / self._house_cov if self._house_cov else None
+        wp_w = self._wp_wh * 3600 / self._wp_cov if self._wp_cov else None
         if (
             not unambiguous
             or house_w is None
@@ -233,6 +242,33 @@ class DemandHistory:
                 )
             )
         ):
+            reasons = []
+            if not unambiguous:
+                reasons.append("dst")
+            if house_w is None:
+                reasons.append("no_house_samples")
+            elif wp_w is None:
+                reasons.append("no_wp_samples")
+            elif house_measured < MIN_MEASURED_S:
+                reasons.append(f"house_measured={house_measured:.0f}s<{MIN_MEASURED_S:.0f}s")
+            elif self._house_cov < MIN_COVERAGE_S:
+                reasons.append(f"house_cov={self._house_cov:.0f}s<{MIN_COVERAGE_S:.0f}s")
+            elif self._wp_cov < MIN_COVERAGE_S:
+                reasons.append(f"wp_cov={self._wp_cov:.0f}s<{MIN_COVERAGE_S:.0f}s")
+            self.flush_reject_reason = ",".join(reasons) or "unknown"
+            if self.flush_reject_reason != self._last_logged_reject:
+                _LOGGER.info(
+                    "Demand quarter %s %s rejected: %s (house_w=%s wp_w=%s "
+                    "house_cov=%.0fs wp_cov=%.0fs)",
+                    local.date().isoformat(),
+                    local.time().isoformat(),
+                    self.flush_reject_reason,
+                    house_w,
+                    wp_w,
+                    self._house_cov,
+                    self._wp_cov,
+                )
+                self._last_logged_reject = self.flush_reject_reason
             self.rejected_quarters += 1
             return
         slot = str(local.hour * 4 + local.minute // 15)
@@ -243,6 +279,7 @@ class DemandHistory:
             self.days.setdefault(day, {})[slot] = house_w - wp_w
             self.wp_days.setdefault(day, {})[slot] = wp_w
         else:
+            self.flush_reject_reason = f"heatpump_w={wp_w:.0f} > house_w={house_w:.0f}"
             self.rejected_quarters += 1
             return
         if self._temp_cov > 0:

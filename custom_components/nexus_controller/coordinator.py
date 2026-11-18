@@ -799,13 +799,15 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             self._demand_history = history
             _LOGGER.info(
                 "Demand backfill: %d house, %d heat-pump, %d temperature points; "
-                "learned %d house days, %d heat-pump days, %d rejected quarters",
+                "learned %d house days, %d heat-pump days, %d rejected quarters"
+                " (last reject: %s)",
                 len(house_series),
                 len(wp_series),
                 len(temp),
                 len(history.days),
                 len(history.wp_days),
                 history.rejected_quarters,
+                history.flush_reject_reason,
             )
         except asyncio.CancelledError:
             raise
