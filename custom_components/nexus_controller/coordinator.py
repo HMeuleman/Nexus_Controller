@@ -634,6 +634,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 _LOGGER.warning("Demand history backfill skipped: unknown local timezone")
                 return
             stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
+            configured_ids = (house_id, power_id, outdoor_id)
             # Renamed or re-created entities leave stale ids in the stored options;
             # resolve each one through the entity registry to its current id so the
             # recorder statistics (keyed by the current id) are still found.
@@ -685,6 +686,14 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                         break
                     await asyncio.sleep(5)
                 stats = await instance.async_add_executor_job(query)
+                _LOGGER.info(
+                    "Demand backfill query: configured=%s resolved=%s "
+                    "start=%s rows=%s",
+                    configured_ids,
+                    (house_id, power_id, outdoor_id),
+                    start.isoformat(),
+                    {key: len(rows) for key, rows in (stats or {}).items()} or "empty",
+                )
                 if stats.get(house_id):
                     break
                 if attempt < 6:
@@ -751,6 +760,16 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 entity_id: 1000.0 if unit_of(entity_id).casefold() == "kw" else 1.0
                 for entity_id in stat_ids
             }
+            _LOGGER.info(
+                "Demand backfill inputs: units=%s factors=%s series_lengths=%s",
+                {entity_id: unit_of(entity_id) for entity_id in sorted(stat_ids)},
+                factors,
+                (
+                    len(stats.get(house_id) or []),
+                    len(stats.get(power_id) or []) if power_id else 0,
+                    len(stats.get(outdoor_id) or []) if outdoor_id else 0,
+                ),
+            )
             house_series = series(house_id)
             wp_series = series(power_id) if power_id else []
             temp: list[tuple[datetime, float]] = []
