@@ -64,3 +64,32 @@ series:
     data_generator: |
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.temperature_c]);
+  - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_komende_24_uur
+    name: Solar forecast (weather-corrected)
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#e8a020'
+    stroke_width: 2
+    curve: stepline
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.pv_w]);
+  - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_komende_24_uur
+    name: Solar forecast (7-day average)
+    yaxis_id: power
+    unit: W
+    type: line
+    color: '#f2d38a'
+    stroke_width: 1
+    curve: stepline
+    stroke_dasharray: 4
+    show:
+      in_header: legendonly
+    data_generator: |
+      return (entity.attributes.slots || []).map(slot =>
+        [new Date(slot.start).getTime(), slot.baseline_w]);
