@@ -81,11 +81,70 @@ def test_inverter_already_off_at_startup_goes_straight_to_idle():
     assert again.reason == "idle"
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"readings_fresh": False},
+        {"plan_valid": False},
+        {"soc_pct": 3.0},
+        {"battery_power_w": -500.0},
+        {"schedule_end_s": None},
+    ],
+)
+def test_inverter_off_at_startup_is_never_woken_by_unavailable_or_stale_inputs(overrides):
+    """Startup (not owns_off): an off inverter stays idle; data gaps must not touch it."""
+    memory = PowerSaveMemory(1800.0, 1800.0, 1800.0, None)
+    d = decision(now_s=1800.0, inverter_on=False, owns_off=False, memory=memory, **overrides)
+    assert d.power == "off"
+    assert d.reason == "idle"
+
+
+def test_inverter_off_at_startup_wakes_only_for_scheduled_work():
+    memory = PowerSaveMemory(1800.0, 1800.0, 1800.0, None)
+    planned = decision(
+        now_s=1800.0,
+        inverter_on=False,
+        owns_off=False,
+        memory=memory,
+        next_work_s=1800.0 + 300.0,
+    )
+    assert planned.power == "on"
+    assert planned.reason == "planned_work"
+    maintenance = decision(
+        now_s=90000.0,
+        inverter_on=False,
+        owns_off=False,
+        memory=PowerSaveMemory(1800.0, 1800.0, 0.0, None),
+    )
+    assert maintenance.power == "on"
+    assert maintenance.reason == "maintenance_due"
+    # Work beyond the wake lead keeps the inverter off.
+    later = decision(
+        now_s=1800.0,
+        inverter_on=False,
+        owns_off=False,
+        memory=memory,
+        next_work_s=1800.0 + 301.0,
+    )
+    assert later.power == "off"
+    assert later.reason == "idle"
+
+
+def test_inverter_off_under_own_control_still_wakes_on_stale_measurements():
+    """owns_off (we switched it off ourselves): stale data is a fault and wakes it."""
+    memory = PowerSaveMemory(0.0, 0.0, 0.0, None)
+    d = decision(
+        now_s=2000.0, inverter_on=False, owns_off=True, readings_fresh=False, memory=memory
+    )
+    assert d.power == "on"
+    assert d.reason == "measurements_unavailable"
+
+
 @pytest.mark.parametrize("cause", ["measurements", "plan"])
 def test_safety_wake_keeps_inverter_on_for_cooldown_after_inputs_recover(cause):
     unavailable = {"readings_fresh": False} if cause == "measurements" else {"plan_valid": False}
     off_memory = PowerSaveMemory(0.0, 0.0, 0.0, None)
-    wake = decision(now_s=2000, inverter_on=False, memory=off_memory, **unavailable)
+    wake = decision(now_s=2000, inverter_on=False, owns_off=True, memory=off_memory, **unavailable)
     assert wake.power == "on"
 
     on = decision(now_s=2001, inverter_on=True, memory=wake.memory)
@@ -178,7 +237,10 @@ def test_forecast_must_cover_the_minimum_off_period_and_wake_lead():
     assert decision(schedule_end_s=2999).reason == "idle_period_too_short"
     assert decision(schedule_end_s=3000).power == "off"
     assert decision(inverter_on=False, schedule_end_s=2101).power == "off"
-    assert decision(inverter_on=False, schedule_end_s=2100).reason == "plan_ending"
+    # Startup (not owns_off): an off inverter stays off even when the plan is ending.
+    assert decision(inverter_on=False, schedule_end_s=2100).power == "off"
+    # Under own control the old fail-safe still applies.
+    assert decision(inverter_on=False, owns_off=True, schedule_end_s=2100).reason == "plan_ending"
 
 
 def test_programmable_values_are_used():
@@ -286,6 +348,34 @@ def test_integration_only_switches_off_when_forced_modes_are_confirmed_idle(monk
     assert coordinator._powersave_memory.on_since_s is None
 
 
+def test_startup_blocks_until_inverter_power_state_is_read(monkeypatch):
+    """No inverter writes and no control until the power switch state is known."""
+    coordinator, states, clock, step = integration_coordinator(monkeypatch, inverter="unavailable")
+
+    assert asyncio.run(step()) is False
+    assert coordinator.last_step_data["powersave_status"] == "waiting_for_inverter_state"
+    assert getattr(coordinator, "_powersave_inverter_known", False) is False
+    coordinator.hass.services.async_call.assert_not_awaited()
+
+    states["switch.inverter"].state = "off"
+    assert asyncio.run(step()) is False
+    assert coordinator.last_step_data["powersave_status"] == "idle"
+    assert coordinator._powersave_inverter_known is True
+    coordinator.hass.services.async_call.assert_not_awaited()
+
+
+def test_startup_keeps_inverter_on_without_writing_when_it_was_on(monkeypatch):
+    """An inverter that was on at startup stays on; no service call is needed."""
+    coordinator, states, clock, step = integration_coordinator(monkeypatch, inverter="on")
+    coordinator._powersave_memory = PowerSaveMemory(1990.0, 1990.0, 1990.0, 1990.0)
+    clock[0] = 2000.0
+
+    assert asyncio.run(step()) is False
+    assert coordinator.last_step_data["powersave_status"] == "cooldown"
+    coordinator.hass.services.async_call.assert_not_awaited()
+    assert coordinator._powersave_inverter_known is True
+
+
 def test_powersave_does_not_use_future_plan_with_outdated_earnings(monkeypatch):
     coordinator, _, _, step = integration_coordinator(monkeypatch)
     coordinator.settings[SET_MIN_EARNINGS] = 0.12
@@ -320,6 +410,7 @@ def test_powersave_status_exposes_current_state_and_timing(monkeypatch):
 
 def test_powersave_timing_does_not_invent_work_when_plan_is_invalid(monkeypatch):
     coordinator, _, _, step = integration_coordinator(monkeypatch, inverter="off")
+    coordinator._powersave_owns_off = True
     coordinator._planner_action = lambda *args: DispatchPlan(
         "idle", 0, "planner_unavailable_or_stale"
     )
@@ -333,6 +424,7 @@ def test_powersave_timing_does_not_invent_work_when_plan_is_invalid(monkeypatch)
 
 def test_integration_wakes_on_low_soc_and_waits_for_confirmed_power_and_warmup(monkeypatch):
     coordinator, states, clock, step = integration_coordinator(monkeypatch, inverter="off")
+    coordinator._powersave_owns_off = True
     assert asyncio.run(step(soc=7)) is False
     coordinator.hass.services.async_call.assert_awaited_once_with(
         "switch", "turn_on", {"entity_id": "switch.inverter"}, blocking=True
@@ -347,25 +439,18 @@ def test_integration_wakes_on_low_soc_and_waits_for_confirmed_power_and_warmup(m
 
 
 def test_integration_does_not_power_cycle_when_measurements_recover(monkeypatch):
+    """An off inverter at startup is never woken by stale measurements, even when they recover."""
     coordinator, states, clock, step = integration_coordinator(monkeypatch, inverter="off")
     coordinator._planner_measurement_ages = lambda moment: None
 
     assert asyncio.run(step()) is False
-    coordinator.hass.services.async_call.assert_awaited_once_with(
-        "switch", "turn_on", {"entity_id": "switch.inverter"}, blocking=True
-    )
-    states["switch.inverter"].state = "on"
-    clock[0] += 1
+    assert coordinator.last_step_data["powersave_status"] == "idle"
+    coordinator.hass.services.async_call.assert_not_awaited()
+
     coordinator._planner_measurement_ages = lambda moment: (1, 1, 1, 1, 1)
     assert asyncio.run(step()) is False
-    clock[0] += 60
-    assert asyncio.run(step()) is True
-    assert coordinator.hass.services.async_call.await_count == 1
-    clock[0] += 840
-    assert asyncio.run(step()) is False
-    assert coordinator.hass.services.async_call.await_args.args[:3] == (
-        "switch", "turn_off", {"entity_id": "switch.inverter"}
-    )
+    assert coordinator.last_step_data["powersave_status"] == "idle"
+    coordinator.hass.services.async_call.assert_not_awaited()
 
 
 def test_missing_measurements_after_controller_shutdown_disable_powersave(monkeypatch, caplog):
@@ -407,7 +492,8 @@ def test_missing_measurements_while_manually_off_do_not_disable_powersave(monkey
 
     assert asyncio.run(step()) is False
     assert coordinator.settings[SET_POWERSAVE_ENABLED] is True
-    assert coordinator.hass.services.async_call.await_args.args[:2] == ("switch", "turn_on")
+    assert coordinator.last_step_data["powersave_status"] == "idle"
+    coordinator.hass.services.async_call.assert_not_awaited()
 
 
 def test_failed_shutdown_does_not_claim_ownership_or_trigger_lockout(monkeypatch):
@@ -583,25 +669,36 @@ def test_one_fresh_phase_report_keeps_powersave_measurements_fresh(monkeypatch):
     assert details["measurements"][CONF_GRID_POWER_L3]["fresh"] is True
 
 
-@pytest.mark.parametrize("condition", ["planner", "control", "measurement", "plan", "manual"])
+@pytest.mark.parametrize("condition", ["planner", "control", "manual"])
 def test_integration_fails_on_when_not_safe_to_power_off(monkeypatch, condition):
     coordinator, _, _, step = integration_coordinator(monkeypatch, inverter="off")
     if condition == "planner":
         coordinator.settings[SET_PLANNER_OVERRIDE] = False
     elif condition == "control":
         coordinator.settings[SET_CONTROL_ENABLED] = False
-    elif condition == "measurement":
-        coordinator._planner_measurement_ages = lambda moment: None
-    elif condition == "plan":
-        coordinator._planner_action = lambda *args: DispatchPlan(
-            "idle", 0, "planner_unavailable_or_stale"
-        )
     else:
         coordinator._manual_mode = "charge"
     assert asyncio.run(step()) is False
     coordinator.hass.services.async_call.assert_awaited_once_with(
         "switch", "turn_on", {"entity_id": "switch.inverter"}, blocking=True
     )
+
+
+@pytest.mark.parametrize("condition", ["measurement", "plan"])
+def test_off_inverter_at_startup_is_not_woken_by_stale_data_or_missing_plan(
+    monkeypatch, condition
+):
+    """Startup with the inverter off: stale measurements or a missing plan keep it idle."""
+    coordinator, _, _, step = integration_coordinator(monkeypatch, inverter="off")
+    if condition == "measurement":
+        coordinator._planner_measurement_ages = lambda moment: None
+    else:
+        coordinator._planner_action = lambda *args: DispatchPlan(
+            "idle", 0, "planner_unavailable_or_stale"
+        )
+    assert asyncio.run(step()) is False
+    assert coordinator.last_step_data["powersave_status"] == "idle"
+    coordinator.hass.services.async_call.assert_not_awaited()
 
 
 def test_integration_does_not_assume_power_on_when_service_fails(monkeypatch):

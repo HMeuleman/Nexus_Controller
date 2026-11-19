@@ -205,6 +205,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._powersave_saved_maintenance = started
         self._powersave_wake_pending = False
         self._powersave_owns_off = False
+        self._powersave_inverter_known = False
         self._powersave_measurement_lockout = False
         self.powersave_details: dict[str, object] = {}
         self._lock = asyncio.Lock()
@@ -1128,6 +1129,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         data["experimental_quarter_plan"] = self._quarter_status
         if not getattr(self, "_planner_startup_ready", True):
             return
+        if (
+            bool(getattr(self, "settings", {}).get(SET_POWERSAVE_ENABLED))
+            and self.configured_entity_id(CONF_INVERTER_POWER)
+            and not getattr(self, "_powersave_inverter_known", False)
+        ):
+            # Powersave is enabled: block planning until the inverter power state is read.
+            return
         started = time.monotonic()
         if self._quarter_task is not None and not self._quarter_task.done():
             return
@@ -1817,6 +1825,26 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         planner_enabled = bool(
             self.settings[SET_PLANNER_OVERRIDE] and self.settings[SET_CONTROL_ENABLED]
         )
+
+        known = getattr(self, "_powersave_inverter_known", False)
+        if inverter_on is not None:
+            if not known:
+                _LOGGER.info(
+                    "Inverter power state after start: %s", "on" if inverter_on else "off"
+                )
+            known = True
+            self._powersave_inverter_known = True
+        if enabled and inverter_on is None and not known:
+            # Startup gate: do not touch the inverter and block control/planning until
+            # its power state has been read at least once.
+            data["powersave_status"] = "waiting_for_inverter_state"
+            self.powersave_details = {
+                "configured": True,
+                "enabled": enabled,
+                "inverter_power": "unknown",
+                "requested_power": None,
+            }
+            return False
         now_s = time.monotonic()
         window = None
         ages = self._planner_measurement_ages(now)
@@ -1877,6 +1905,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             manual_active=self._manual_mode is not None,
             memory=self._powersave_memory,
             settings=settings,
+            owns_off=getattr(self, "_powersave_owns_off", False),
         )
         self._powersave_memory = decision.memory
         data["powersave_status"] = decision.reason

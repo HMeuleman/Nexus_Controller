@@ -83,6 +83,7 @@ def decide_powersave(
     manual_active: bool,
     memory: PowerSaveMemory,
     settings: PowerSaveSettings,
+    owns_off: bool = False,
 ) -> PowerSaveDecision:
     """Decide a power request from validated inputs without writing to the inverter."""
     values = (
@@ -142,6 +143,23 @@ def decide_powersave(
         return on("powersave_disabled")
     if manual_active:
         return on("manual_override")
+    if inverter_on is False and not owns_off:
+        # The inverter was already off before Nexus took control (startup or a manual
+        # switch-off): keep it off. Stale readings and a missing plan are expected
+        # while it is off and must not wake it; only scheduled work may turn it on.
+        if now_s >= maintenance + settings.maintenance_interval_s - settings.maintenance_duration_s:
+            return on("maintenance_due")
+        if (
+            plan_valid
+            and schedule_end_s is not None
+            and math.isfinite(schedule_end_s)
+            and next_work_s is not None
+            and math.isfinite(next_work_s)
+            and next_work_s <= schedule_end_s
+            and next_work_s <= now_s + settings.lead_s
+        ):
+            return on("planned_work")
+        return PowerSaveDecision("off", "idle", False, memory)
     if (
         not readings_fresh
         or soc_pct is None
