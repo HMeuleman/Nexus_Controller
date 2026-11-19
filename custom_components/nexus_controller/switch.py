@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -24,6 +25,8 @@ from .const import (
     SET_POWERSAVE_ENABLED,
 )
 from .coordinator import NexusCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -107,9 +110,18 @@ class NexusControlSwitch(_NexusSwitch, RestoreEntity):
         """Restore the previous control state; defaults to off when nothing was stored."""
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
-        if last is not None and last.state in ("on", "off"):
+        if last is None or last.state not in ("on", "off"):
+            return
+        _LOGGER.info(
+            "Restoring battery control switch state after restart: %s", last.state
+        )
+        try:
             await self.coordinator.async_set_control(last.state == "on")
-            self.async_write_ha_state()
+        except Exception:
+            _LOGGER.exception(
+                "Restoring battery control state failed; keeping default off"
+            )
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start controlling the battery."""

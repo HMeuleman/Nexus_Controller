@@ -316,7 +316,9 @@ def test_optional_inputs_and_apexcharts_attribute_contract():
     card = yaml.safe_load((Path(__file__).parents[1] / "dashboard_demand.yaml").read_text())
     assert card["type"] == "custom:apexcharts-card"
     for series, field in zip(
-        card["series"], ("total_w", "baseline_w", "heatpump_w", "temperature_c"), strict=True
+        card["series"],
+        ("total_w", "baseline_w", "heatpump_w", "temperature_c", "pv_w", "baseline_w"),
+        strict=True,
     ):
         assert "entity.attributes.slots" in series["data_generator"]
         assert f"slot.{field}" in series["data_generator"]
