@@ -69,6 +69,18 @@ def test_off_only_after_startup_and_activity_cooldown():
     assert decision(now_s=2700, memory=active.memory).power == "off"
 
 
+def test_inverter_already_off_at_startup_goes_straight_to_idle():
+    """No cooldown when the inverter is already off: powersave starts in idle."""
+    memory = PowerSaveMemory(1800.0, 1800.0, 1800.0, None)
+    d = decision(now_s=1800.0, inverter_on=False, memory=memory)
+    assert d.power == "off"
+    assert d.reason == "idle"
+    # And it stays off instead of waking into cooldown.
+    again = decision(now_s=1801.0, inverter_on=False, memory=d.memory)
+    assert again.power == "off"
+    assert again.reason == "idle"
+
+
 @pytest.mark.parametrize("cause", ["measurements", "plan"])
 def test_safety_wake_keeps_inverter_on_for_cooldown_after_inputs_recover(cause):
     unavailable = {"readings_fresh": False} if cause == "measurements" else {"plan_valid": False}
@@ -753,8 +765,9 @@ def test_restart_restores_last_maintenance_deadline(monkeypatch):
         memory=coordinator._powersave_memory,
         schedule_end_s=100000,
     )
-    assert result.power == "on"
-    assert result.reason == "cooldown"
+    # Inverter already off at startup: no cooldown, straight to idle.
+    assert result.power == "off"
+    assert result.reason == "idle"
     due = decision(
         now_s=2800,
         inverter_on=False,

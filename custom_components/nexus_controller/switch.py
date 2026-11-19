@@ -97,11 +97,19 @@ class NexusManualSwitch(CoordinatorEntity[NexusCoordinator], SwitchEntity):
         await self.coordinator.async_set_manual(self._mode, False)
 
 
-class NexusControlSwitch(_NexusSwitch):
-    """Lets the integration drive the battery; always off after a restart for safety."""
+class NexusControlSwitch(_NexusSwitch, RestoreEntity):
+    """Lets the integration drive the battery; restores the last choice after a restart."""
 
     _key = SET_CONTROL_ENABLED
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous control state; defaults to off when nothing was stored."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state in ("on", "off"):
+            await self.coordinator.async_set_control(last.state == "on")
+            self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start controlling the battery."""

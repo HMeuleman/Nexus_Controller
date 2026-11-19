@@ -171,7 +171,8 @@ def decide_powersave(
         on_since if on_since is not None else memory.started_s,
         memory.last_unavailable_s if memory.last_unavailable_s is not None else memory.started_s,
     )
-    if now_s - cooldown_start < settings.cooldown_s:
+    # An inverter that is already off needs no cooldown: stay in idle right away.
+    if inverter_on is not False and now_s - cooldown_start < settings.cooldown_s:
         return on("cooldown")
     idle_until = min(
         schedule_end_s,
