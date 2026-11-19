@@ -31,6 +31,7 @@ MEASUREMENT_KEYS = frozenset(
     {
         "cycles_today",
         "demand_forecast_now",
+        "solar_forecast_now",
         "demand_temp_forecast",
         "demand_temp_actual",
     }
@@ -115,6 +116,8 @@ class NexusInputSensor(CoordinatorEntity[NexusCoordinator], SensorEntity):
             return self.coordinator.powersave_details
         if self.entity_description.config_key in ("demand_forecast", "heatpump_forecast"):
             return self.coordinator.demand_details
+        if self.entity_description.config_key == "solar_forecast":
+            return self.coordinator.solar_details
         return None
 
     @callback

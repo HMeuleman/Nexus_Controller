@@ -250,6 +250,7 @@ def integration_coordinator(monkeypatch, inverter="on"):
         _powersave_saved_maintenance=0,
         _powersave_store=SimpleNamespace(async_delay_save=MagicMock()),
         _powersave_data=lambda: {},
+        _solar_sources=lambda: [],
         _powersave_wake_pending=False,
         _manual_mode=None,
     )
@@ -747,7 +748,13 @@ def test_restart_restores_last_maintenance_deadline(monkeypatch):
         _store=SimpleNamespace(async_load=AsyncMock(return_value=None)),
         _powersave_store=store,
         _demand_store=SimpleNamespace(async_load=AsyncMock(return_value=None)),
+        _solar_store=SimpleNamespace(
+            async_load=AsyncMock(return_value=None),
+            async_save=AsyncMock(),
+            async_delay_save=MagicMock(),
+        ),
         _powersave_data=lambda: {},
+        _solar_sources=lambda: [],
         configured_entity_id=lambda key: None,
         hass=SimpleNamespace(
             async_create_task=MagicMock(side_effect=lambda coro: coro.close())
@@ -794,6 +801,7 @@ def test_main_control_loop_skips_writes_while_inverter_is_not_ready():
         _async_control=AsyncMock(),
         _schedule_experimental_quarter_plan=MagicMock(),
         _update_demand_forecast=MagicMock(),
+        _update_solar_forecast=MagicMock(),
         _store=SimpleNamespace(async_delay_save=MagicMock()),
         tracker=SimpleNamespace(as_dict=lambda: {}),
     )

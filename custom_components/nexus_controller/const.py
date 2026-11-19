@@ -194,6 +194,8 @@ ENTITY_LABELS: Final = {
     "powersave_status": ("powersave_status", None),
     "experimental_quarter_plan": ("experimental_quarter_plan", None),
     "demand_forecast": ("demand_forecast", "kWh"),
+    "solar_forecast": ("solar_forecast", "kWh"),
+    "solar_forecast_now": ("solar_forecast_now", "W"),
     "heatpump_forecast": ("heatpump_forecast", "kWh"),
     "demand_forecast_now": ("demand_forecast_now", "W"),
     "demand_temp_forecast": ("demand_temp_forecast", "°C"),

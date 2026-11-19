@@ -119,6 +119,7 @@ from .quarter_planner import (
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
 from .solar import daylight_hours, hourly_forecast_quarters, solar_surplus_kwh, update_load_average
+from .solar_history import SolarHistory
 from .tracker import BatteryTracker
 from .utils import (
     calculate_phase_power_limits,
@@ -184,6 +185,15 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self.demand_details: dict = {
             "status": "not_configured", "diagnostic_only": True, "slots": []
         }
+        self._solar_history = SolarHistory()
+        self._solar_store: Store = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.solar"
+        )
+        self.solar_details: dict = {
+            "status": "not_configured", "diagnostic_only": True, "slots": []
+        }
+        self._solar_backfill_task: asyncio.Task | None = None
+        self._solar_forecast_enabled = True
         self._demand_task: asyncio.Task | None = None
         self._demand_backfill_task: asyncio.Task | None = None
         self._demand_weather_attempt: datetime | None = None
@@ -243,6 +253,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if isinstance(demand, dict) and demand.get("sources") == self._demand_source_list():
             self._demand_history.restore(demand)
         self._demand_backfill_task = self.hass.async_create_task(self._async_demand_backfill())
+        solar = await self._solar_store.async_load()
+        if isinstance(solar, dict) and solar.get("sources") == self._solar_sources():
+            self._solar_history.restore(solar)
+        if self._solar_sources():
+            self._solar_backfill_task = self.hass.async_create_task(
+                self._async_solar_backfill()
+            )
         saved = await self._powersave_store.async_load()
         now_s = time.monotonic()
         now_wall = dt_util.utcnow().timestamp()
@@ -295,7 +312,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 await self._quarter_task
             except asyncio.CancelledError:
                 pass
-        for task in (self._demand_backfill_task, self._demand_task):
+        for task in (self._demand_backfill_task, self._demand_task, self._solar_backfill_task):
             if task is not None and not task.done():
                 task.cancel()
                 try:
@@ -305,6 +322,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if self._control_was_on:
             await self._async_release()
         await self._demand_store.async_save(self._demand_data())
+        await self._solar_store.async_save(self._solar_data())
         if self.settings[SET_POWERSAVE_ENABLED] or self._powersave_wake_pending:
             await self._async_set_inverter_power(True)
         await self._powersave_store.async_save(self._powersave_data())
@@ -525,6 +543,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             data["control_status"] = "inverter_not_ready"
         self._schedule_experimental_quarter_plan(data, now, limits)
         self._update_demand_forecast(data, now)
+        self._update_solar_forecast(data, now)
         self._store.async_delay_save(self.tracker.as_dict, 60)
         return data
 
@@ -549,8 +568,197 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         """Full source key used to invalidate persisted profiles on config changes."""
         return [*self._demand_sources(), *self._demand_exclusions()]
 
+    def _solar_sources(self) -> list[str]:
+        """Configured PV power sensors feeding the solar forecaster."""
+        return [
+            entity_id
+            for entity_id in (
+                self.configured_entity_id(key) for key in PV_POWER_ENTITIES
+            )
+            if entity_id
+        ]
+
+    def _solar_data(self) -> dict:
+        return {**self._solar_history.as_dict(), "sources": self._solar_sources()}
+
     def _demand_data(self) -> dict:
         return {**self._demand_history.as_dict(), "sources": self._demand_source_list()}
+
+    def _update_solar_forecast(self, data: dict, now: datetime) -> None:
+        """Learn live PV power and publish the 24 h solar forecast (diagnostics only)."""
+        data["solar_forecast"] = None
+        data["solar_forecast_now"] = 0.0
+        source_ids = self._solar_sources()
+        if not source_ids:
+            self.solar_details = {"status": "not_configured", "diagnostic_only": True, "slots": []}
+            return
+        pv_states: list[tuple[str | None, str | None]] = []
+        for entity_id in source_ids:
+            state = self.hass.states.get(entity_id)
+            pv_states.append(
+                (
+                    state.state if state is not None else None,
+                    state.attributes.get("unit_of_measurement") if state is not None else None,
+                )
+            )
+        pv_w = sum_pv_power_states(pv_states)
+        timezone = dt_util.get_time_zone(self.hass.config.time_zone)
+        if timezone is None:
+            self.solar_details = {
+                "status": "invalid_timezone", "diagnostic_only": True, "slots": []
+            }
+            return
+        if self._solar_forecast_enabled:
+            self._solar_history.observe(now, pv_w, timezone)
+            self._solar_store.async_delay_save(self._solar_data, 60)
+            self.solar_details = self._solar_history.forecast(now, timezone)
+            slots = self.solar_details.get("slots") or []
+            data["solar_forecast"] = self.solar_details.get("total_kwh")
+            data["solar_forecast_now"] = (slots[0]["pv_w"] if slots else None) or 0.0
+            self.solar_details.update(
+                sources=source_ids,
+                input_status="ok" if pv_w is not None else "inputs_unavailable",
+            )
+        else:
+            self.solar_details = {
+                "status": "no_history",
+                "diagnostic_only": True,
+                "slots": [],
+                "sources": source_ids,
+            }
+
+    async def _async_solar_backfill(self) -> None:
+        """Rebuild the solar window from recorder statistics once sources are live.
+
+        Without PV history the forecaster is disabled (error log) instead of
+        silently producing zero forecasts.
+        """
+        try:
+            source_ids = self._solar_sources()
+            if not source_ids:
+                return
+            timezone = dt_util.get_time_zone(self.hass.config.time_zone)
+            if timezone is None:
+                _LOGGER.warning("Solar history backfill skipped: unknown local timezone")
+                return
+            stat_ids = set(source_ids)
+            try:
+                registry = er.async_get(self.hass)
+            except (AttributeError, TypeError):
+                registry = None
+            if registry is not None:
+                resolved = set()
+                for entity_id in stat_ids:
+                    entry = registry.async_get(entity_id)
+                    resolved.add(entry.entity_id if entry is not None else entity_id)
+                stat_ids = resolved
+            start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
+
+            def query() -> dict[str, list[dict[str, object]]]:
+                return statistics_during_period(
+                    self.hass,  # type: ignore[arg-type]
+                    start,
+                    None,
+                    stat_ids,  # type: ignore[arg-type]
+                    period="5minute",
+                    units=None,
+                    types={"mean"},
+                )
+
+            instance = get_instance(self.hass)
+            stats: dict = {}
+            for attempt in range(1, 7):
+                stats = await instance.async_add_executor_job(query)
+                if any(stats.get(entity_id) for entity_id in stat_ids):
+                    break
+                if attempt < 6:
+                    _LOGGER.info(
+                        "Solar backfill attempt %d: no statistics yet for %s; retrying in 60 s",
+                        attempt,
+                        sorted(stat_ids),
+                    )
+                    await asyncio.sleep(60)
+            meta = await instance.async_add_executor_job(
+                lambda: get_metadata(self.hass, statistic_ids=stat_ids)  # type: ignore[arg-type]
+            )
+
+            def unit_of(entity_id: str) -> str:
+                entry = meta.get(entity_id)
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    entry = entry[1]
+                unit = (
+                    entry.get("unit_of_measurement")
+                    if isinstance(entry, dict)
+                    else None
+                )
+                return str(unit) if unit else ""
+
+            def series(entity_id: str) -> list[tuple[datetime, float]]:
+                points: list[tuple[datetime, float]] = []
+                for row in stats.get(entity_id) or []:
+                    value = row.get("mean")
+                    if value is None:
+                        continue
+                    row_start = row.get("start")
+                    if isinstance(row_start, datetime):
+                        stamp = row_start
+                    elif isinstance(row_start, (int, float)):
+                        stamp = datetime.fromtimestamp(row_start, tz=dt_util.UTC)
+                    else:
+                        try:
+                            stamp = datetime.fromisoformat(str(row_start))
+                        except (TypeError, ValueError):
+                            continue
+                    try:
+                        points.append((stamp, float(value)))
+                    except (TypeError, ValueError):
+                        continue
+                return points
+
+            per_sensor = {
+                entity_id: [
+                    (stamp, value * (1000.0 if unit_of(entity_id).casefold() == "kw" else 1.0))
+                    for stamp, value in series(entity_id)
+                ]
+                for entity_id in stat_ids
+            }
+            totals: dict[datetime, float] = {}
+            for points in per_sensor.values():
+                for stamp, watts in points:
+                    totals[stamp] = totals.get(stamp, 0.0) + watts
+            merged = sorted(totals.items())
+            _LOGGER.info(
+                "Solar backfill: %d merged points from %s (rows per sensor: %s)",
+                len(merged),
+                sorted(stat_ids),
+                {key: len(rows) for key, rows in per_sensor.items()},
+            )
+            if not merged:
+                self._solar_forecast_enabled = False
+                _LOGGER.error(
+                    "Solar forecaster disabled: the recorder has no statistics for %s; "
+                    "check state_class/unit of the PV sensors",
+                    sorted(stat_ids),
+                )
+                return
+            history = SolarHistory()
+            history.backfill(merged, timezone)
+            self._solar_history = history
+            self._solar_forecast_enabled = True
+            _LOGGER.info(
+                "Solar backfill learned %d days from %d points",
+                len(history.days),
+                len(merged),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # diagnostics only; never break the integration
+            self._solar_forecast_enabled = False
+            _LOGGER.warning(
+                "Rebuilding solar history from recorder failed: %s\n%s",
+                err,
+                traceback.format_exc(),
+            )
 
     def _update_demand_forecast(self, data: dict, now: datetime) -> None:
         """Collect optional diagnostics only, after the battery control step."""
