@@ -26,6 +26,9 @@
           "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
           "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
           "outdoor_temp_entity": "Buitentemperatuursensor met historie (°C/°F; nauwkeuriger dan de weerentiteit; optionele diagnose)",
+          "demand_exclude_entity_1": "Uitsluiten van verbruiksgemiddelde: sensor 1 (W/kW; bijv. autolader; optionele diagnose)",
+          "demand_exclude_entity_2": "Uitsluiten van verbruiksgemiddelde: sensor 2 (W/kW; optionele diagnose)",
+          "demand_exclude_entity_3": "Uitsluiten van verbruiksgemiddelde: sensor 3 (W/kW; optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }
@@ -64,6 +67,9 @@
           "heatpump_power_entity": "Elektrisch vermogen warmtepomp (W/kW; optionele diagnose)",
           "demand_weather_entity": "Weerentiteit met temperatuurverwachting per uur (optionele diagnose)",
           "outdoor_temp_entity": "Buitentemperatuursensor met historie (°C/°F; nauwkeuriger dan de weerentiteit; optionele diagnose)",
+          "demand_exclude_entity_1": "Uitsluiten van verbruiksgemiddelde: sensor 1 (W/kW; bijv. autolader; optionele diagnose)",
+          "demand_exclude_entity_2": "Uitsluiten van verbruiksgemiddelde: sensor 2 (W/kW; optionele diagnose)",
+          "demand_exclude_entity_3": "Uitsluiten van verbruiksgemiddelde: sensor 3 (W/kW; optionele diagnose)",
           "fuse_limit_amps": "Zekeringlimiet per fase (A)",
           "battery_power_entity": "Sensor netto batterijvermogen (W; positief is ontladen, negatief is laden; nodig voor sturing en de opbrengstteller)"
         }

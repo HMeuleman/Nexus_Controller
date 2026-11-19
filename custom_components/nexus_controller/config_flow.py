@@ -30,6 +30,7 @@ from .const import (
     CONF_SOLAR_HOURLY_TODAY,
     CONF_SOLAR_HOURLY_TOMORROW,
     DEFAULT_FUSE_LIMIT_A,
+    DEMAND_EXCLUDE_KEYS,
     DOMAIN,
     NAME,
     PHASE_POWER_ENTITIES,
@@ -110,6 +111,7 @@ def _config_schema(defaults: dict | None = None) -> vol.Schema:
         CONF_HOUSE_POWER,
         CONF_HEATPUMP_POWER,
         CONF_OUTDOOR_TEMP,
+        *DEMAND_EXCLUDE_KEYS,
     ):
         if key in defaults and defaults[key]:
             schema[vol.Optional(key, default=defaults[key])] = _entity_selector("sensor")
@@ -203,6 +205,7 @@ class NexusOptionsFlow(config_entries.OptionsFlow):
                 CONF_HEATPUMP_POWER,
                 CONF_OUTDOOR_TEMP,
                 CONF_DEMAND_WEATHER,
+                *DEMAND_EXCLUDE_KEYS,
             ):
                 user_input.setdefault(key, None)
             return self.async_create_entry(title="", data=user_input)

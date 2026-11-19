@@ -26,6 +26,9 @@
           "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
           "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
           "outdoor_temp_entity": "Outdoor temperature sensor with history (°C/°F; more accurate than the weather entity; optional diagnostics)",
+          "demand_exclude_entity_1": "Exclude from demand average: sensor 1 (W/kW; e.g. EV charger; optional diagnostics)",
+          "demand_exclude_entity_2": "Exclude from demand average: sensor 2 (W/kW; optional diagnostics)",
+          "demand_exclude_entity_3": "Exclude from demand average: sensor 3 (W/kW; optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }
@@ -64,6 +67,9 @@
           "heatpump_power_entity": "Heat-pump electrical power sensor (W/kW; optional diagnostics)",
           "demand_weather_entity": "Hourly temperature forecast weather entity (optional diagnostics)",
           "outdoor_temp_entity": "Outdoor temperature sensor with history (°C/°F; more accurate than the weather entity; optional diagnostics)",
+          "demand_exclude_entity_1": "Exclude from demand average: sensor 1 (W/kW; e.g. EV charger; optional diagnostics)",
+          "demand_exclude_entity_2": "Exclude from demand average: sensor 2 (W/kW; optional diagnostics)",
+          "demand_exclude_entity_3": "Exclude from demand average: sensor 3 (W/kW; optional diagnostics)",
           "fuse_limit_amps": "Fuse limit per phase (A)",
           "battery_power_entity": "Net battery power sensor (W; positive is discharging, negative is charging; required for control and the earnings tracker)"
         }

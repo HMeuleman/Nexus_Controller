@@ -52,6 +52,7 @@ from .const import (
     CONF_SOLAR_HOURLY_TOMORROW,
     DEFAULT_FUSE_LIMIT_A,
     DEFAULT_SAMPLE_INTERVAL_S,
+    DEMAND_EXCLUDE_KEYS,
     DOMAIN,
     EXPORT_RESERVE_SOC_PCT,
     INPUT_SENSOR_ENTITIES,
@@ -239,7 +240,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         if isinstance(stored, dict):
             self.tracker.state = BatteryTracker.state_from_dict(stored)
         demand = await self._demand_store.async_load()
-        if isinstance(demand, dict) and demand.get("sources") == self._demand_sources():
+        if isinstance(demand, dict) and demand.get("sources") == self._demand_source_list():
             self._demand_history.restore(demand)
         self._demand_backfill_task = self.hass.async_create_task(self._async_demand_backfill())
         saved = await self._powersave_store.async_load()
@@ -534,8 +535,22 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             for key in (CONF_HOUSE_POWER, CONF_HEATPUMP_POWER, CONF_OUTDOOR_TEMP)
         ]
 
+    def _demand_exclusions(self) -> list[str]:
+        """Optional high-load sensors (e.g. EV charger) excluded from the average."""
+        return [
+            entity_id
+            for entity_id in (
+                self.configured_entity_id(key) for key in DEMAND_EXCLUDE_KEYS
+            )
+            if entity_id
+        ]
+
+    def _demand_source_list(self) -> list[str | None]:
+        """Full source key used to invalidate persisted profiles on config changes."""
+        return [*self._demand_sources(), *self._demand_exclusions()]
+
     def _demand_data(self) -> dict:
-        return {**self._demand_history.as_dict(), "sources": self._demand_sources()}
+        return {**self._demand_history.as_dict(), "sources": self._demand_source_list()}
 
     def _update_demand_forecast(self, data: dict, now: datetime) -> None:
         """Collect optional diagnostics only, after the battery control step."""
@@ -555,6 +570,18 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         power_w = sum_power_states([
             (power.state, power.attributes.get("unit_of_measurement"))
         ]) if power is not None else None
+        excluded_w = 0.0
+        for exclude_id in self._demand_exclusions():
+            exclude = self.hass.states.get(exclude_id)
+            if exclude is None:
+                continue
+            exclude_w = sum_power_states([
+                (exclude.state, exclude.attributes.get("unit_of_measurement"))
+            ])
+            if exclude_w is not None:
+                excluded_w += exclude_w
+        if house_w is not None and excluded_w:
+            house_w = max(0.0, house_w - excluded_w)
         outdoor = self.hass.states.get(outdoor_id) if outdoor_id else None
         weather = self.hass.states.get(weather_id) if weather_id else None
         if outdoor is not None:
@@ -605,6 +632,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 self._demand_weather_updated.isoformat() if self._demand_weather_updated else None
             ),
             temperature_source=outdoor_id or weather_id,
+            excluded_sensors=self._demand_exclusions(),
+            excluded_w=excluded_w,
             input_status=(
                 "ok"
                 if house_w is not None and (power_id is None or power_w is not None)
@@ -628,6 +657,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         """
         try:
             house_id, power_id, outdoor_id = self._demand_sources()
+            exclude_ids = self._demand_exclusions()
             timezone = dt_util.get_time_zone(self.hass.config.time_zone)
             if not house_id:
                 _LOGGER.info("Demand history backfill skipped: no house power sensor")
@@ -635,8 +665,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             if timezone is None:
                 _LOGGER.warning("Demand history backfill skipped: unknown local timezone")
                 return
-            stat_ids = {entity_id for entity_id in (house_id, power_id, outdoor_id) if entity_id}
-            configured_ids = (house_id, power_id, outdoor_id)
+            stat_ids = {
+                entity_id
+                for entity_id in (house_id, power_id, outdoor_id, *exclude_ids)
+                if entity_id
+            }
+            configured_ids = (house_id, power_id, outdoor_id, *exclude_ids)
             # Renamed or re-created entities leave stale ids in the stored options;
             # resolve each one through the entity registry to its current id so the
             # recorder statistics (keyed by the current id) are still found.
@@ -654,9 +688,10 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 house_id = resolve(house_id)
                 power_id = resolve(power_id)
                 outdoor_id = resolve(outdoor_id)
+                exclude_ids = [resolved for e in exclude_ids if (resolved := resolve(e))]
                 stat_ids = {
                     entity_id
-                    for entity_id in (house_id, power_id, outdoor_id)
+                    for entity_id in (house_id, power_id, outdoor_id, *exclude_ids)
                     if entity_id
                 }
             start = dt_util.utcnow() - timedelta(days=HISTORY_DAYS + 1)
@@ -777,6 +812,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             )
             house_series = series(house_id)
             wp_series = series(power_id) if power_id else []
+            excluded_by_stamp: dict[datetime, float] = {}
+            for exclude_id in exclude_ids:
+                for stamp, value in series(exclude_id):
+                    excluded_by_stamp[stamp] = (
+                        excluded_by_stamp.get(stamp, 0.0) + value * factors[exclude_id]
+                    )
             temp: list[tuple[datetime, float]] = []
             if outdoor_id:
                 unit = unit_of(outdoor_id).casefold()
@@ -795,7 +836,17 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             history = DemandHistory()
             history.wp_configured = power_id is not None
             history.backfill(
-                [(stamp, value * factors[house_id]) for stamp, value in house_series],
+                [
+                    (
+                        stamp,
+                        max(
+                            0.0,
+                            value * factors[house_id]
+                            - excluded_by_stamp.get(stamp, 0.0),
+                        ),
+                    )
+                    for stamp, value in house_series
+                ],
                 [(stamp, value * factors[power_id]) for stamp, value in wp_series],
                 temp,
                 timezone,

@@ -411,6 +411,7 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         weather = AsyncMock()
         coordinator = SimpleNamespace(
             _demand_sources=lambda: ["sensor.power", "sensor.heat", None],
+            _demand_exclusions=lambda: [],
             configured_entity_id=lambda key: "weather.selected",
             hass=SimpleNamespace(
                 states=SimpleNamespace(get=states.get),
@@ -456,6 +457,7 @@ def test_coordinator_without_heatpump_uses_house_only_forecast():
         history.observe = observe = MagicMock(wraps=history.observe)
         coordinator = SimpleNamespace(
             _demand_sources=lambda: ["sensor.power", None, "sensor.outdoor"],
+            _demand_exclusions=lambda: [],
             configured_entity_id=lambda key: "weather.selected",
             hass=SimpleNamespace(
                 states=SimpleNamespace(
@@ -537,6 +539,7 @@ def test_startup_backfill_rebuilds_quarters_from_recorder_statistics(monkeypatch
     _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", "sensor.heat", "sensor.temp"],
+            _demand_exclusions=lambda: [],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
@@ -569,6 +572,7 @@ def test_startup_backfill_accepts_epoch_float_statistic_timestamps(monkeypatch):
     _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, None],
+            _demand_exclusions=lambda: [],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: SimpleNamespace(state="2.0", attributes={})
@@ -592,6 +596,7 @@ def test_startup_backfill_accepts_epoch_float_statistic_timestamps(monkeypatch):
     _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, "sensor.temp"],
+            _demand_exclusions=lambda: [],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
@@ -609,6 +614,36 @@ def test_startup_backfill_accepts_epoch_float_statistic_timestamps(monkeypatch):
     assert history.temp_days["2026-11-10"]["52"] == pytest.approx(5.0)
 
 
+def test_startup_backfill_subtracts_excluded_sensors_from_house(monkeypatch):
+    """EV-charger-like sensors must not skew the learned baseline."""
+    base = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
+    stats = {
+        "sensor.power": [{"start": stamp, "mean": 3.0} for stamp in stamps],
+        "sensor.ev": [{"start": stamp, "mean": 1.0} for stamp in stamps],
+    }
+    units = {"sensor.power": "kW", "sensor.ev": "kW"}
+    _backfill_coordinator(monkeypatch, stats, units)
+    coordinator = SimpleNamespace(
+        _demand_sources=lambda: ["sensor.power", None, None],
+        _demand_exclusions=lambda: ["sensor.ev"],
+        hass=SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity: {
+                    "sensor.power": SimpleNamespace(state="3.0", attributes={}),
+                    "sensor.ev": SimpleNamespace(state="1.0", attributes={}),
+                }.get(entity)
+            ),
+            config=SimpleNamespace(time_zone="Europe/Amsterdam"),
+        ),
+        _demand_history=DemandHistory(),
+    )
+    asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    history = coordinator._demand_history
+    # 3.0 kW house minus 1.0 kW excluded load = 2000 W baseline.
+    assert history.days["2026-11-10"]["52"] == pytest.approx(2000.0)
+
+
 def test_startup_backfill_rejects_unsupported_temperature_unit(monkeypatch):
     base = datetime(2026, 11, 10, 12, tzinfo=UTC)
     stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
@@ -620,6 +655,7 @@ def test_startup_backfill_rejects_unsupported_temperature_unit(monkeypatch):
     _backfill_coordinator(monkeypatch, stats, units)
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, "sensor.temp"],
+            _demand_exclusions=lambda: [],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: {
@@ -657,6 +693,7 @@ def test_startup_backfill_resolves_renamed_entities_through_the_registry(monkeyp
         )
         coordinator = SimpleNamespace(
             _demand_sources=lambda: ["sensor.old_name", None, None],
+            _demand_exclusions=lambda: [],
             hass=SimpleNamespace(
                 states=SimpleNamespace(
                     get=lambda entity: {
@@ -706,6 +743,7 @@ def test_startup_backfill_retries_when_recorder_is_not_ready_yet(monkeypatch):
     )
     coordinator = SimpleNamespace(
         _demand_sources=lambda: ["sensor.power", None, None],
+            _demand_exclusions=lambda: [],
         hass=SimpleNamespace(
             states=SimpleNamespace(
                 get=lambda entity: SimpleNamespace(state="1000", attributes={})
