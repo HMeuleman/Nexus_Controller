@@ -401,6 +401,9 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
                 state="2.0", attributes={"unit_of_measurement": "kW"}
             ),
             "sensor.heat": SimpleNamespace(state="1.5", attributes={"unit_of_measurement": "kW"}),
+            "weather.selected": SimpleNamespace(
+                state="rainy", attributes={"temperature": 5, "temperature_unit": "°C"}
+            ),
         }
         history = DemandHistory()
         original_observe = history.observe
@@ -427,7 +430,7 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         data = {}
         NexusCoordinator._update_demand_forecast(coordinator, data, now)
         history.observe.assert_called_once_with(
-            now, 2000.0, 1500.0, None, ZoneInfo("Europe/Amsterdam")
+            now, 2000.0, 1500.0, 5.0, ZoneInfo("Europe/Amsterdam")
         )
         weather.assert_not_awaited()
         await coordinator._demand_task
@@ -438,7 +441,7 @@ def test_coordinator_collects_converted_units_without_waiting_for_weather():
         # Learning has not started: the recorded forecast-for-now reads 0, not null.
         assert data["demand_forecast_now"] == 0.0
         assert data["demand_temp_forecast"] is None
-        assert data["demand_temp_actual"] is None
+        assert data["demand_temp_actual"] == 5.0
         assert coordinator.demand_details["diagnostic_only"] is True
         assert coordinator.demand_details["heatpump_configured"] is True
         assert coordinator.demand_details["temperature_source"] == "weather.selected"

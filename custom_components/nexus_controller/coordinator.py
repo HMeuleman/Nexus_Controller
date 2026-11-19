@@ -579,10 +579,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._demand_store.async_delay_save(self._demand_data, 60)
         if (
             weather_id
+            and weather is not None
             and (self._demand_task is None or self._demand_task.done())
             and (
                 self._demand_weather_attempt is None
-                or (now - self._demand_weather_attempt).total_seconds() >= 900
+                or (now - self._demand_weather_attempt).total_seconds()
+                >= (60 if self._demand_weather_status == "request_failed" else 900)
             )
         ):
             self._demand_weather_attempt = now
