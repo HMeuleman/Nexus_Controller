@@ -555,7 +555,30 @@ def test_startup_backfill_rebuilds_quarters_from_recorder_statistics(monkeypatch
     assert history.wp_configured is True
 
 
-def test_startup_backfill_converts_fahrenheit_outdoor_sensor(monkeypatch):
+def test_startup_backfill_accepts_epoch_float_statistic_timestamps(monkeypatch):
+    """The recorder stores start_ts as a DOUBLE (epoch seconds), not a datetime."""
+    base = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
+    stats = {
+        "sensor.power": [{"start": stamp.timestamp(), "mean": 2.0} for stamp in stamps],
+    }
+    units = {"sensor.power": "kW"}
+    _backfill_coordinator(monkeypatch, stats, units)
+    coordinator = SimpleNamespace(
+        _demand_sources=lambda: ["sensor.power", None, None],
+        hass=SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity: SimpleNamespace(state="2.0", attributes={})
+                if entity == "sensor.power"
+                else None
+            ),
+            config=SimpleNamespace(time_zone="Europe/Amsterdam"),
+        ),
+        _demand_history=DemandHistory(),
+    )
+    asyncio.run(NexusCoordinator._async_demand_backfill(coordinator))
+    history = coordinator._demand_history
+    assert history.days["2026-11-10"]["52"] == pytest.approx(2000.0)
     base = datetime(2026, 11, 10, 12, tzinfo=UTC)
     stamps = [base + timedelta(minutes=5 * index) for index in range(13)]
     stats = {

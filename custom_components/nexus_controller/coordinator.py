@@ -745,6 +745,9 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     row_start = row.get("start")
                     if isinstance(row_start, datetime):
                         stamp = row_start
+                    elif isinstance(row_start, (int, float)):
+                        # recorder statistics store start_ts as an epoch float
+                        stamp = datetime.fromtimestamp(row_start, tz=dt_util.UTC)
                     else:
                         try:
                             stamp = datetime.fromisoformat(str(row_start))
