@@ -1,7 +1,7 @@
 type: custom:apexcharts-card
 header:
   show: true
-  title: Consumption forecast
+  title: Gebruiks voorspeller (huis en WP) in W
 graph_span: 24h
 span:
   start: minute
@@ -21,7 +21,7 @@ yaxis:
       title:
         text: Celsius
 series:
-  - entity: sensor.replace_with_your_heatpump_forecast_entity
+  - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
     name: Total consumption
     yaxis_id: power
     unit: W
@@ -32,7 +32,7 @@ series:
     data_generator: |
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.total_w]);
-  - entity: sensor.replace_with_your_heatpump_forecast_entity
+  - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
     name: Household without heat pump
     yaxis_id: power
     unit: W
@@ -43,7 +43,7 @@ series:
     data_generator: |
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.baseline_w]);
-  - entity: sensor.replace_with_your_heatpump_forecast_entity
+  - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
     name: Heat pump
     yaxis_id: power
     unit: W
@@ -54,7 +54,7 @@ series:
     data_generator: |
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.heatpump_w]);
-  - entity: sensor.replace_with_your_heatpump_forecast_entity
+  - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
     name: Outside temperature
     yaxis_id: temperature
     unit: C
