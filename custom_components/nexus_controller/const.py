@@ -92,12 +92,12 @@ CONTROL_ENTITIES: Final = (
 MAX_BATTERY_POWER_W: Final = 10_000
 DEFAULT_FUSE_LIMIT_A: Final = 25
 # Defaults follow the offline simulation of May-October data; see sim/closed_loop.py.
-# Min earnings is the former margin (0.12) plus wear (0.08).
+# Min earnings default is 0.10 EUR/kWh (the former margin 0.12 + wear 0.08 = 0.20 was too strict).
 SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
-    SET_RESERVED_ROOM: 1_000.0,
+    SET_RESERVED_ROOM: 500.0,
     SET_MAX_CHARGE_PRICE: 0.15,
     SET_DISCHARGE_PRICE_ABOVE: 0.0,
-    SET_MIN_EARNINGS: 0.20,
+    SET_MIN_EARNINGS: 0.10,
     SET_TAX: 0.11,
     # Conservative until tuned on the real inverter: the offline sim assumed an ideal plant.
     SET_PID_KP: 0.5,
@@ -105,7 +105,7 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_PID_KD: 0.0,
     SET_PID_START_ERROR: 15.0,
     SET_PID_STOP_ERROR: 8.0,
-    SET_MIN_CONTROL_POWER: 100.0,
+    SET_MIN_CONTROL_POWER: 200.0,
     SET_DISCHARGE_OFFSET: 50.0,
     SET_MIN_DISCHARGE_SOC: 10.0,
     SET_DIRECTION_DELAY: 75.0,
@@ -118,7 +118,7 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_CONTROL_ENABLED: False,
     SET_PLANNER_OVERRIDE: True,
     SET_POWERSAVE_ENABLED: False,
-    SET_POWERSAVE_COOLDOWN: 15.0,
+    SET_POWERSAVE_COOLDOWN: 10.0,
     SET_POWERSAVE_LEAD: 5.0,
     SET_POWERSAVE_INTERVAL: 24.0,
     SET_POWERSAVE_DURATION: 30.0,

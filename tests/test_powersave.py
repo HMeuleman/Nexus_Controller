@@ -24,6 +24,7 @@ from custom_components.nexus_controller.const import (
     SET_CONTROL_ENABLED,
     SET_MIN_EARNINGS,
     SET_PLANNER_OVERRIDE,
+    SET_POWERSAVE_COOLDOWN,
     SET_POWERSAVE_ENABLED,
     SET_POWERSAVE_INTERVAL,
     SET_POWERSAVE_LEAD,
@@ -395,7 +396,8 @@ def test_powersave_status_exposes_current_state_and_timing(monkeypatch):
     assert details["inverter_power"] == "on"
     assert details["requested_power"] == "on"
     assert details["inverter_on_since"] == (now - timedelta(seconds=50)).isoformat()
-    assert details["cooldown_until"] == (now + timedelta(seconds=850)).isoformat()
+    cooldown = timedelta(minutes=SETTING_DEFAULTS[SET_POWERSAVE_COOLDOWN])
+    assert details["cooldown_until"] == (now - timedelta(seconds=50) + cooldown).isoformat()
     assert details["control_ready_at"] == (now + timedelta(seconds=10)).isoformat()
     assert details["next_planned_work_at"] == (now + timedelta(minutes=30)).isoformat()
     assert details["planned_wake_at"] == (now + timedelta(minutes=24, seconds=50)).isoformat()
@@ -615,7 +617,9 @@ def test_powersave_sensor_exposes_the_stale_input_and_age_limit(monkeypatch):
     assert details["measurement_max_age_s"] == 120
     assert details["measurements_fresh"] is False
     assert details["last_unavailable_at"] == now.isoformat()
-    assert details["cooldown_until"] == (now + timedelta(minutes=15)).isoformat()
+    assert details["cooldown_until"] == (
+        now + timedelta(minutes=SETTING_DEFAULTS[SET_POWERSAVE_COOLDOWN])
+    ).isoformat()
     assert details["measurements"][CONF_BATTERY_SOC] == {
         "entity_id": CONF_BATTERY_SOC,
         "state": "1",
