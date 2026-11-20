@@ -3,9 +3,12 @@
 Mirrors the household demand learning: a per-quarter (15-minute) mean PV power
 profile is learned from the last HISTORY_DAYS days, rebuilt from recorder
 statistics at startup so no blind learning period is needed. On top of the
-raw profile a per-hour weather correction is applied: the ratio between the
-measured production of the current hour so far and the profile for the same
-period is applied to the remaining hours of *today* only (never tomorrow).
+raw profile an on-the-fly weather correction is applied: every quarter the
+average measured power of the trailing hour (the last four fully elapsed
+quarters) is compared with the profiled average for the same window, and the
+ratio is applied to the remaining quarters of *today* only (never tomorrow).
+The ratio is clamped to [0, MAX_HOUR_RATIO] and is only trusted when both
+averages exceed MIN_HOUR_AVG_W, so tiny morning numbers cannot blow it up.
 """
 
 from __future__ import annotations
@@ -21,10 +24,13 @@ HISTORY_DAYS = 7
 MIN_PROFILE_DAYS = 3
 # A quarter is learned when at least this many 5-minute buckets were seen.
 MIN_QUARTER_BUCKETS = 2
-# Ratios above this multiple of the profile are clamped (bad weather caps out).
+# Ratios above this multiple of the profile are clamped.
 MAX_HOUR_RATIO = 3.0
-# Below this many Wh of profiled production in the elapsed hour the ratio is 1.
-MIN_PROFILED_HOUR_WH = 25.0
+# The trailing-hour correction is only trusted when both the measured and the
+# profiled average power exceed this (W); below it the numbers are too small.
+MIN_HOUR_AVG_W = 50.0
+# The correction window: the last fully elapsed quarters (one hour).
+RATIO_QUARTERS = 4
 STORE_VERSION = 1
 
 
@@ -49,8 +55,8 @@ class SolarHistory:
         self._wh = 0.0
         self._buckets = 0
         self._last: tuple[datetime, float] | None = None
-        self._hour: datetime | None = None
-        self._hour_wh = 0.0
+        # (quarter start UTC, measured Wh, local date, local slot) of recent quarters.
+        self._recent_quarters: list[tuple[datetime, float, str, str]] = []
 
     # -- persistence ------------------------------------------------------
 
@@ -103,6 +109,7 @@ class SolarHistory:
         if seconds <= 0:
             return
         self.days.setdefault(day, {})[slot] = self._wh * 3600 / seconds
+        self._recent_quarters.append((self._quarter, self._wh, day, slot))
 
     def _process(self, now: datetime, pv_w: float | None, timezone: tzinfo) -> None:
         now = now.astimezone(UTC)
@@ -113,11 +120,9 @@ class SolarHistory:
             self._wh = 0.0
             self._buckets = 0
             self._last = None
-        hour = now.replace(minute=0, second=0, microsecond=0)
-        if hour != self._hour:
-            self._hour = hour
-            self._hour_wh = 0.0
         self._prune(now, timezone)
+        cutoff = now - timedelta(minutes=15 * (RATIO_QUARTERS + 1))
+        self._recent_quarters = [entry for entry in self._recent_quarters if entry[0] >= cutoff]
         value = _finite(pv_w)
         if value is None or value < 0:
             self._last = None
@@ -127,7 +132,6 @@ class SolarHistory:
             if 0 < elapsed <= 720:
                 trap = (self._last[1] + value) / 2
                 self._wh += trap * elapsed / 3600
-                self._hour_wh += trap * elapsed / 3600
                 self._buckets += 1
         self._last = (now, value)
 
@@ -151,28 +155,49 @@ class SolarHistory:
                 values.append(value)
         return values
 
-    def _profiled_hour_so_far(self, now: datetime, timezone: tzinfo) -> float:
-        """Profile energy (Wh) for the elapsed part of the current local hour."""
-        local = now.astimezone(timezone)
-        # Only fully elapsed quarters of the current hour count on both sides.
-        elapsed_slots = local.hour * 4 + local.minute // 15
-        total_wh = 0.0
-        for slot_index in range(local.hour * 4, elapsed_slots):
-            slot = str(slot_index)
-            values = self._profile_slot(slot, local.date())
-            if len(values) >= MIN_PROFILE_DAYS:
-                total_wh += mean(values) * 0.25  # W * 15 min = Wh
-        return total_wh
+    def _ratio_window(self, now: datetime, timezone: tzinfo) -> tuple[float, float, float]:
+        """Weather ratio over the trailing hour, evaluated per quarter.
+
+        The window is the last RATIO_QUARTERS fully elapsed quarters: the
+        measured average power (W) over that hour versus the profiled average
+        for the same quarters. Returns (ratio, measured_avg_w, profiled_avg_w);
+        the ratio is 1.0 unless both averages exceed MIN_HOUR_AVG_W, and it is
+        clamped to [0, MAX_HOUR_RATIO].
+        """
+        now_utc = now.astimezone(UTC)
+        current_quarter = now_utc.replace(
+            minute=now_utc.minute // 15 * 15, second=0, microsecond=0
+        )
+        window_start = current_quarter - timedelta(minutes=15 * RATIO_QUARTERS)
+        entries = [
+            entry
+            for entry in self._recent_quarters
+            if window_start <= entry[0] < current_quarter
+        ]
+        if len(entries) != RATIO_QUARTERS:
+            return 1.0, 0.0, 0.0
+        for previous, current in zip(entries, entries[1:], strict=False):
+            if current[0] - previous[0] != timedelta(minutes=15):
+                return 1.0, 0.0, 0.0
+        # Four quarters span exactly one hour, so Wh over the window == avg W.
+        measured_avg_w = sum(entry[1] for entry in entries)
+        baselines = []
+        for _, _, day, slot in entries:
+            values = self._profile_slot(slot, datetime.fromisoformat(day).date())
+            if len(values) < MIN_PROFILE_DAYS:
+                return 1.0, measured_avg_w, 0.0
+            baselines.append(mean(values))
+        profiled_avg_w = mean(baselines)
+        if measured_avg_w <= MIN_HOUR_AVG_W or profiled_avg_w <= MIN_HOUR_AVG_W:
+            return 1.0, measured_avg_w, profiled_avg_w
+        ratio = measured_avg_w / profiled_avg_w
+        if not math.isfinite(ratio):
+            return 1.0, measured_avg_w, profiled_avg_w
+        return min(max(ratio, 0.0), MAX_HOUR_RATIO), measured_avg_w, profiled_avg_w
 
     def hour_ratio(self, now: datetime, timezone: tzinfo) -> float:
-        """Measured vs profiled production of the current hour so far."""
-        profiled_wh = self._profiled_hour_so_far(now, timezone)
-        if profiled_wh < MIN_PROFILED_HOUR_WH:
-            return 1.0
-        ratio = self._hour_wh / profiled_wh
-        if not math.isfinite(ratio):
-            return 1.0
-        return min(max(ratio, 0.0), MAX_HOUR_RATIO)
+        """Measured vs profiled average power of the trailing hour."""
+        return self._ratio_window(now, timezone)[0]
 
     def forecast(self, now: datetime, timezone: tzinfo) -> dict:
         """Return 96 future quarter slots in W; today's tail is weather-corrected."""
@@ -182,7 +207,7 @@ class SolarHistory:
         if first <= now:
             first += timedelta(minutes=15)
         today_local = now.astimezone(timezone).date()
-        ratio = self.hour_ratio(now, timezone)
+        ratio, measured_avg_w, profiled_avg_w = self._ratio_window(now, timezone)
         slots = []
         total_wh = 0.0
         for index in range(96):
@@ -208,6 +233,8 @@ class SolarHistory:
             "status": "ready" if learned_days >= MIN_PROFILE_DAYS else "learning",
             "history_days": learned_days,
             "hour_ratio": round(ratio, 3),
+            "ratio_measured_avg_w": round(measured_avg_w, 1),
+            "ratio_profiled_avg_w": round(profiled_avg_w, 1),
             "slots": slots,
             "total_kwh": (
                 round(total_wh / 1000, 3)
