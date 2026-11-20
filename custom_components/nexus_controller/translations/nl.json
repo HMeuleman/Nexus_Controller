@@ -112,6 +112,7 @@
       "demand_forecast": {"name": "Verbruiksverwachting komende 24 uur"},
       "solar_forecast": {"name": "Zonne-opbrengstverwachting komende 24 uur"},
       "solar_forecast_now": {"name": "Zonne-opbrengstverwachting nu"},
+      "solar_ml_forecast_now": {"name": "Zonne-opbrengstverwachting ML nu"},
       "heatpump_forecast": {"name": "Warmtepompverwachting komende 24 uur"},
       "demand_forecast_now": {"name": "Verbruiksverwachting nu"},
       "demand_temp_forecast": {"name": "Temperatuurverwachting"},

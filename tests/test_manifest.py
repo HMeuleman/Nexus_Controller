@@ -2,6 +2,7 @@
 
 import ast
 import json
+import re
 from pathlib import Path
 
 
@@ -14,7 +15,10 @@ def test_manifest_has_expected_domain_and_config_flow():
 
     assert manifest["domain"] == "nexus_controller"
     assert manifest["config_flow"] is True
-    assert manifest["version"] == "0.5.46"
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', pyproject, flags=re.MULTILINE)
+    assert match is not None
+    assert manifest["version"] == match.group(1)
 
 
 def test_dutch_translation_has_all_config_and_options_fields():

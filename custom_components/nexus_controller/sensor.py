@@ -32,6 +32,7 @@ MEASUREMENT_KEYS = frozenset(
         "cycles_today",
         "demand_forecast_now",
         "solar_forecast_now",
+        "solar_ml_forecast_now",
         "demand_temp_forecast",
         "demand_temp_actual",
     }

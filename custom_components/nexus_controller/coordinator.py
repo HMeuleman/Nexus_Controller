@@ -589,6 +589,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         """Learn live PV power and publish the 24 h solar forecast (diagnostics only)."""
         data["solar_forecast"] = None
         data["solar_forecast_now"] = 0.0
+        data["solar_ml_forecast_now"] = None
         source_ids = self._solar_sources()
         if not source_ids:
             self.solar_details = {"status": "not_configured", "diagnostic_only": True, "slots": []}
@@ -609,6 +610,17 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 "status": "invalid_timezone", "diagnostic_only": True, "slots": []
             }
             return
+        # ML hourly forecast for the current quarter, in W, independent of the
+        # internal forecaster: kWh per quarter * 1000 / 0.25 h.
+        ml_quarters = self._experimental_solar_quarters(now)
+        now_utc = now.astimezone(dt_util.UTC)
+        quarter_start = now_utc.replace(
+            minute=now_utc.minute // 15 * 15, second=0, microsecond=0
+        )
+        ml_quarter_kwh = ml_quarters.get(quarter_start)
+        data["solar_ml_forecast_now"] = (
+            round(ml_quarter_kwh * 4000, 1) if ml_quarter_kwh is not None else None
+        )
         if self._solar_forecast_enabled:
             self._solar_history.observe(now, pv_w, timezone)
             self._solar_store.async_delay_save(self._solar_data, 60)

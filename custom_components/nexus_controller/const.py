@@ -196,6 +196,7 @@ ENTITY_LABELS: Final = {
     "demand_forecast": ("demand_forecast", "kWh"),
     "solar_forecast": ("solar_forecast", "kWh"),
     "solar_forecast_now": ("solar_forecast_now", "W"),
+    "solar_ml_forecast_now": ("solar_ml_forecast_now", "W"),
     "heatpump_forecast": ("heatpump_forecast", "kWh"),
     "demand_forecast_now": ("demand_forecast_now", "W"),
     "demand_temp_forecast": ("demand_temp_forecast", "°C"),
@@ -216,4 +217,5 @@ ENTITY_PRECISION: Final = {
     "demand_forecast_now": 0,
     "demand_temp_forecast": 1,
     "demand_temp_actual": 1,
+    "solar_ml_forecast_now": 0,
 }

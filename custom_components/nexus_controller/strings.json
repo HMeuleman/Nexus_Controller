@@ -106,6 +106,7 @@
       "demand_forecast": {"name": "Consumption forecast next 24 hours"},
       "solar_forecast": {"name": "Solar production forecast next 24 hours"},
       "solar_forecast_now": {"name": "Solar production forecast now"},
+      "solar_ml_forecast_now": {"name": "Solar ML production forecast now"},
       "heatpump_forecast": {"name": "Heat-pump forecast next 24 hours"},
       "demand_forecast_now": {"name": "Consumption forecast now"},
       "demand_temp_forecast": {"name": "Temperature forecast"},

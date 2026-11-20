@@ -1,11 +1,17 @@
 """Tests for efficiency-aware charge planning, tracking, solar and sample interval helpers."""
 
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.nexus_controller.charging import inverter_efficiency, plan_net_charge
+from custom_components.nexus_controller.const import (
+    CONF_SOLAR_HOURLY_TODAY,
+    CONF_SOLAR_HOURLY_TOMORROW,
+)
+from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.sample_rate import SampleIntervalEstimator
 from custom_components.nexus_controller.solar import (
     daylight_hours,
@@ -13,6 +19,7 @@ from custom_components.nexus_controller.solar import (
     solar_surplus_kwh,
     update_load_average,
 )
+from custom_components.nexus_controller.solar_history import SolarHistory
 from custom_components.nexus_controller.tracker import BatteryTracker
 from custom_components.nexus_controller.utils import parse_energy_kwh, parse_forecast_tax
 
@@ -206,6 +213,65 @@ def test_solar_forecast_skips_invalid_missing_and_dst_ambiguous_hours():
     assert len(quarters) == 4
     assert sum(quarters.values()) == pytest.approx(1.0)
     assert hourly_forecast_quarters(None, day=date(2026, 11, 10), timezone=UTC) == {}
+
+
+def _solar_coordinator(states: dict, configured: dict) -> SimpleNamespace:
+    coordinator = SimpleNamespace(
+        hass=SimpleNamespace(
+            states=SimpleNamespace(get=states.get),
+            config=SimpleNamespace(time_zone="Europe/Amsterdam"),
+        ),
+        _solar_forecast_enabled=False,
+        _solar_history=SolarHistory(),
+        _solar_store=SimpleNamespace(async_delay_save=lambda *args, **kwargs: None),
+        _solar_sources=lambda: ["sensor.pv"],
+        configured_entity_id=configured.get,
+    )
+    coordinator._experimental_solar_quarters = lambda now: (
+        NexusCoordinator._experimental_solar_quarters(coordinator, now)
+    )
+    return coordinator
+
+
+def test_ml_solar_forecast_now_exposes_current_quarter_in_watts():
+    states = {
+        "sensor.pv": SimpleNamespace(state="1500", attributes={"unit_of_measurement": "W"}),
+        "sensor.ml_today": SimpleNamespace(
+            state="0.8",
+            attributes={
+                "unit_of_measurement": "kWh",
+                "hourly_forecast": {"11:00": 0.8, "12:00": 0.4},
+            },
+        ),
+        "sensor.ml_tomorrow": SimpleNamespace(
+            state="7.0",
+            attributes={"unit_of_measurement": "kWh", "hours": {"11:00": 1.6}},
+        ),
+    }
+    configured = {
+        CONF_SOLAR_HOURLY_TODAY: "sensor.ml_today",
+        CONF_SOLAR_HOURLY_TOMORROW: "sensor.ml_tomorrow",
+    }
+    coordinator = _solar_coordinator(states, configured)
+    # 10:07 UTC = 11:07 local (Amsterdam, UTC+1): current quarter started 10:00 UTC = 11:00 local.
+    data: dict = {}
+    NexusCoordinator._update_solar_forecast(
+        coordinator, data, datetime(2026, 11, 20, 10, 7, tzinfo=UTC)
+    )
+    # 0.8 kWh in the 11:00 hour -> 0.2 kWh per quarter -> 0.2 * 4000 = 800 W.
+    assert data["solar_ml_forecast_now"] == pytest.approx(800.0)
+
+
+def test_ml_solar_forecast_now_is_none_without_configured_ml_entities():
+    states = {
+        "sensor.pv": SimpleNamespace(state="1500", attributes={"unit_of_measurement": "W"}),
+    }
+    coordinator = _solar_coordinator(states, {})
+    data: dict = {}
+    NexusCoordinator._update_solar_forecast(
+        coordinator, data, datetime(2026, 11, 20, 10, 7, tzinfo=UTC)
+    )
+    assert data["solar_ml_forecast_now"] is None
 
 
 def test_solar_surplus_subtracts_expected_house_use():
