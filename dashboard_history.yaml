@@ -1,60 +1,94 @@
 type: custom:apexcharts-card
+update_interval: 5min
 header:
   show: true
-  title: Consumption forecast versus actual (last 48 hours)
+  title: Voorspelling versus actueel (afgelopen 48 uur)
 graph_span: 48h
-span:
-  start: -48h
 now:
   show: true
 apex_config:
   chart:
     height: 350
+    zoom:
+      enabled: true
+      type: x
+    toolbar:
+      show: true
+      tools:
+        zoom: true
+        zoomin: true
+        zoomout: true
+        pan: true
+        reset: true
 yaxis:
   - id: power
     min: 0
     decimals: 0
+    align_to: 1000
+    show: true
     apex_config:
       title:
         text: W
-  - id: temperature
-    opposite: true
-    decimals: 1
-    apex_config:
-      title:
-        text: Celsius
 series:
-  - entity: sensor.replace_with_your_house_power_entity
-    name: Actual house power
+  - entity: sensor.electricity_house
+    name: Actueel Huis (W)
     yaxis_id: power
+    transform: return parseFloat(x) * 1000;
     unit: W
     type: area
     color: '#236e4c'
     stroke_width: 2
     opacity: 0.6
+    show:
+      legend_value: false
     statistics:
       type: mean
       period: 5minute
-  - entity: sensor.replace_with_your_consumption_forecast_now_entity
-    name: Forecast when made
+  - entity: sensor.kelder_nexus_controller_verbruiksverwachting_nu
+    name: Voorspelling Huis (W)
     yaxis_id: power
     unit: W
     type: line
-    color: '#4e789f'
+    color: yellow
     stroke_width: 2
     curve: stepline
-  - entity: sensor.replace_with_your_temperature_forecast_entity
-    name: Forecast temperature
-    yaxis_id: temperature
-    unit: C
+    show:
+      legend_value: false
+  - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_nu
+    name: Voorspelling Solar (W)
+    yaxis_id: power
+    unit: W
     type: line
-    color: '#c48928'
-    stroke_width: 1
-    dashed: true
-  - entity: sensor.replace_with_your_actual_temperature_entity
-    name: Actual temperature
-    yaxis_id: temperature
-    unit: C
+    color: orange
+    stroke_width: 2
+    curve: stepline
+    show:
+      legend_value: false
+    statistics:
+      type: mean
+      period: 5minute
+  - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_ml_nu
+    name: ML voorspeld (W)
+    yaxis_id: power
+    unit: W
     type: line
-    color: '#b04f65'
+    color: '#2b6cb0'
+    stroke_width: 2
+    curve: stepline
+    float_precision: 0
+    show:
+      legend_value: false
+    statistics:
+      type: mean
+      period: 5minute
+  - entity: sensor.nexus_controller_zonneproductie
+    name: Actueel Solar (W)
+    yaxis_id: power
+    unit: W
+    type: line
+    color: red
     stroke_width: 1
+    curve: stepline
+    float_precision: 0
+    show:
+      legend_value: false
