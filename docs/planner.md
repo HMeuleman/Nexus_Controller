@@ -423,3 +423,19 @@ slots above get NOM discharge capped at predicted demand − solar; strict bound
 missing demand forecast → no NOM discharge but export unaffected; `demand_forecast_w` on output
 slots; `current_plan_dispatch` unchanged; effective threshold = max(new, min_control_power_w);
 refresh on setting change.
+
+### 10.5 Expose the five planner actions per slot (`action` field) — **IMPLEMENTED**
+
+**Why:** the planner already distinguishes the five actions per slot, but split across fields
+(`power_w` sign, `charge_source`, `discharge_mode`). For visualization (planner overview card)
+each slot needs one explicit action label.
+
+**Implemented (commit `70818bf`):** `slot_action(power_w, charge_source, discharge_mode)`
+in `quarter_planner.py` maps a slot to `"idle" | "discharge" | "nom_discharge" | "charge" |
+"nom_charge"`; the coordinator sets `slot["action"]` on every plan slot (including the active
+one) after `discharge_mode` is annotated. So `experimenteel_kwartierplan` attributes
+`slots[].action` is directly usable in apexcharts `data_generator` filters, e.g.
+`slots.filter(s => s.action === 'nom_discharge').map(s => [new Date(s.start).getTime(), s.power_w])`.
+
+**Tests:** `tests/test_quarter_planner.py::test_slot_action_maps_the_five_planner_actions` and
+`test_plan_slots_carry_the_action_field`.

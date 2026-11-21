@@ -44,6 +44,7 @@ from custom_components.nexus_controller.quarter_planner import (
     forecast_quarters,
     forecast_quarters_with_current,
     plan_quarters,
+    slot_action,
 )
 from custom_components.nexus_controller.switch import NexusPlannerSwitch
 from tests.test_actuator import _actuator, _calls
@@ -3122,3 +3123,51 @@ def test_plan_slots_carry_forecast_demand_surplus_and_effective_thresholds():
         else "none"
     )
     assert slot1["discharge_mode"] == expected_mode
+
+
+def test_slot_action_maps_the_five_planner_actions():
+    assert slot_action(0.0, "none", "none") == "idle"
+    assert slot_action(2500.0, "none", "export") == "discharge"
+    assert slot_action(2500.0, "none", "nom") == "nom_discharge"
+    assert slot_action(-3000.0, "grid", "none") == "charge"
+    assert slot_action(-3000.0, "solar", "none") == "nom_charge"
+
+
+def test_plan_slots_carry_the_action_field():
+    now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
+    start = now.replace(minute=15)
+    second = start + timedelta(minutes=15)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.20), (second, 0.70)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_MIN_CONTROL_POWER: 200,
+            SET_NOM_CHARGE_MIN_SURPLUS_W: 0,
+            SET_NOM_DISCHARGE_MIN_DEMAND_W: 0,
+        },
+        tracker=SimpleNamespace(
+            state=SimpleNamespace(avg_daytime_load_w=10_000.0, stored_value=0.30)
+        ),
+        demand_details={"slots": []},
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda now, source="ml": {},
+        _planner_solar_source=lambda: "none",
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
+    )
+    slots = coordinator.experimental_quarter_plan["slots"]
+    assert slots[0]["power_w"] < 0
+    assert slots[0]["action"] == "charge"
+    assert slots[1]["power_w"] > 0
+    # High predicted demand (fallback constant 10 kW) -> NOM discharge.
+    assert slots[1]["action"] == "nom_discharge"
+    assert slots[1]["discharge_mode"] == "nom"

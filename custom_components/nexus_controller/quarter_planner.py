@@ -14,6 +14,15 @@ from .dispatch import DispatchPlan
 MAX_PLANNER_WORK = 20_000_000
 
 
+def slot_action(power_w: float, charge_source: str, discharge_mode: str) -> str:
+    """Map a plan slot to one of the five planner actions."""
+    if power_w > 0:
+        return "nom_discharge" if discharge_mode == "nom" else "discharge"
+    if power_w < 0:
+        return "nom_charge" if charge_source == "solar" else "charge"
+    return "idle"
+
+
 @dataclass(frozen=True)
 class QuarterPlan:
     """AC power is positive for discharge and negative for charging."""

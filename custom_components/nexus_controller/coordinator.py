@@ -118,6 +118,7 @@ from .quarter_planner import (
     forecast_quarters_with_current,
     measurement_ages_fresh,
     plan_quarters,
+    slot_action,
 )
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
@@ -1433,6 +1434,11 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 )
                 if forecast[0][0] <= now:
                     self._quarter_commitment = self.experimental_quarter_plan["slots"][0].copy()
+            slot["action"] = slot_action(
+                float(slot["power_w"]),
+                str(slot.get("charge_source") or "none"),
+                str(slot.get("discharge_mode") or "none"),
+            )
         data["experimental_quarter_plan"] = "experimental"
 
     def _planner_solar_source(self) -> str:
