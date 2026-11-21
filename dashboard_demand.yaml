@@ -1,10 +1,26 @@
 type: custom:apexcharts-card
 update_interval: 5min
+all_series_config:
+  group_by:
+    duration: 15min
+    func: avg
+    fill: last
 header:
   show: true
   title: Gebruiks voorspeller (huis en WP) in W
   show_states: true
 apex_config:
+  xaxis:
+    tooltip:
+      enabled: false
+  tooltip:
+    shared: true
+    intersect: false
+    fixed:
+      enabled: true
+    x:
+      format: HH:mm (dd MMM)
+      show: true
   chart:
     zoom:
       enabled: true
@@ -112,8 +128,9 @@ series:
     stroke_width: 1
     curve: stepline
     data_generator: |
-      return (entity.attributes.slots || []).map(slot =>
-        [new Date(slot.start).getTime(), slot.baseline_w]);
+      return (entity.attributes.slots || [])
+        .filter(slot => slot.pv_w != null)
+        .map(slot => [new Date(slot.start).getTime(), slot.pv_w]);
   - entity: sensor.solar_forecast_ml_rest_of_day
     name: ML
     show:
