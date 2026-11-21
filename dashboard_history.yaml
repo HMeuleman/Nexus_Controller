@@ -1,5 +1,10 @@
 type: custom:apexcharts-card
 update_interval: 5min
+all_series_config:
+  group_by:
+    duration: 15min
+    func: avg
+    fill: last
 header:
   show: true
   title: Voorspelling versus actueel (afgelopen 48 uur)
@@ -7,6 +12,17 @@ graph_span: 48h
 now:
   show: true
 apex_config:
+  xaxis:
+    tooltip:
+      enabled: false
+  tooltip:
+    shared: true
+    intersect: false
+    fixed:
+      enabled: true
+    x:
+      format: HH:mm (dd MMM)
+      show: true
   chart:
     height: 350
     zoom:
