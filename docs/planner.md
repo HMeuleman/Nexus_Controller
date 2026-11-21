@@ -198,3 +198,57 @@ ML forecast covers every plan slot; missing forecast tax falls back to `SET_TAX`
 profit excludes the retained current slot; future phase limits may reduce actual power. The
 planner functions are pure (no HA calls); all device writes go through the actuator in
 `_async_control` only.
+
+## 10. To be implemented — feature specs
+
+### 10.1 Solar source override switch for the planner (internal vs ML)
+
+**Why:** today the planner takes the ML hourly forecast whenever the ML entities are configured
+(`_experimental_solar_quarters`, `coordinator.py:1372`). We want to keep ML as an option but be
+able to force the planner onto the *internal* learned forecaster, while **both** predictors keep
+being recorded for historical comparison.
+
+**Behavior spec:**
+
+1. New boolean setting `SET_SOLAR_ML_PLANNER` (key e.g. `solar_ml_planner_enabled`), default
+   **true** (preserves current behavior: ML is used when configured). Exposed as a normal switch
+   entity in `switch.py` (same `_NexusSwitch` pattern as `NexusPlannerSwitch`), with translations
+   in `strings.json` / `en.json` / `nl.json`, e.g. NL "Gebruik ML zonne-uurverwachting in planner"
+   ("Use ML solar hourly forecast in planner"). Switch ON = ML, OFF = internal.
+2. The switch affects **only the planner's solar input** (`_experimental_solar_quarters` and
+   therefore `solar_values` / `solar_kwh` in `_async_experimental_quarter_plan`):
+   - ON + ML entities configured → current ML path (`hourly_forecast`/`hours` attributes →
+     quarter kWh).
+   - OFF (or ML not configured) → internal forecaster: map `self.solar_details["slots"]`
+     (`pv_w` per quarter start, UTC) to quarter kWh (`pv_w * 0.25 / 1000`), covering today and
+     tomorrow like the ML path. If the internal forecaster is disabled (no recorder statistics,
+     `_solar_forecast_enabled == False`) or has no slots, solar is omitted from the plan
+     (`solar_input = None`, `solar_included: false`) — same as today when ML is missing.
+   - Both paths produce the same shape: `dict[UTC quarter start → kWh]`, so nothing downstream
+     in `plan_quarters` changes.
+3. **Not affected by the switch** (must keep working regardless, so the apexcharts comparison
+   stays possible):
+   - `solar_forecast_now` sensor (internal, W) — keeps recording the internal current-quarter
+     prediction.
+   - `solar_ml_forecast_now` sensor (ML, W) — keeps recording the ML current-quarter prediction
+     whenever the ML entities are configured, even when the switch is OFF. This sensor is fed in
+     `_update_solar_forecast` and must stay independent of the planner source switch.
+   - The 24 h internal forecast sensor and its `slots`/`hour_ratio` attributes.
+   - `solar_surplus_forecast` (uses the separate `CONF_SOLAR_FORECAST` entity).
+4. Observability: add `solar_source: "ml" | "internal" | "none"` to the
+   `experimental_quarter_plan` metadata so the plan sensor shows which predictor was used.
+5. Changing the switch must trigger a plan refresh: add the new key to the
+   `_quarter_refresh_pending` key list in `set_setting()` (`coordinator.py:382`).
+6. Edge cases: switch OFF while ML configured → internal used, ML `_nu` sensor still updates;
+   switch ON without ML entities → fall back to internal (log once); internal forecaster disabled
+   → `solar_source: "none"`, plan proceeds without solar (current behavior).
+
+**Implementation sketch (for the later plan phase):** new const + `SETTING_DEFAULTS` entry in
+`const.py`; switch description in `switch.py` + translations; branch in
+`_experimental_solar_quarters` (`coordinator.py:1372`) selecting ML vs internal quarters;
+`solar_source` in the plan dict (`coordinator.py:1323`); `set_setting` refresh key; leave
+`_update_solar_forecast` untouched.
+
+**Tests to add:** planner uses internal slots when switch OFF even with ML entities configured;
+uses ML when ON; ML `_nu` sensor still updates when switch OFF; `solar_source` metadata correct;
+fallback to internal when ML entities missing; plan refresh triggered on switch change.
