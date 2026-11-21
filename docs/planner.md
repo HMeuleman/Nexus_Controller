@@ -266,7 +266,9 @@ still governs the live PID loop unchanged.
 
 1. New number setting `SET_NOM_CHARGE_MIN_SURPLUS_W` (key `nom_charge_min_surplus_w`):
    - unit **W**, range 0–5000, step 50 (same shape as `reserved_room_w`);
-   - proposed default **500 W** (open for discussion);
+   - default / init value **0 W** — the effective threshold is
+     `max(0, SET_MIN_CONTROL_POWER)` = `min_control_power_w` (200 W), so a default of 0 simply
+     means "no extra margin beyond the minimum control power";
    - entry in `SETTING_DEFAULTS` (`const.py:96`) and a `NexusNumberDescription` in `number.py`
      with `translation_key` = the key, so it appears as a normal config number entity;
    - translations in `strings.json` / `en.json` / `nl.json`, e.g. NL
