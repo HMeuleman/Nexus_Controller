@@ -261,7 +261,13 @@ being recorded for historical comparison.
 uses ML when ON; ML `_nu` sensor still updates when switch OFF; `solar_source` metadata correct;
 fallback to internal when ML entities missing; plan refresh triggered on switch change.
 
-### 10.2 New setting sensor: minimum predicted surplus for NOM charge (planner-only)
+### 10.2 New setting sensor: minimum predicted surplus for NOM charge (planner-only) — **IMPLEMENTED** (commit `6dcdbce`)
+
+Implemented as specced: number `nom_charge_min_surplus_w` (W, 0–5000, step 50, default 0),
+NL "Minimaal voorspeld zonne-overschot voor NOM-laden (W)"; effective planner threshold
+`max(setting, min_control_power_w)`; plan metadata `nom_charge_min_surplus_w`.
+
+**Original spec:**
 
 **Why:** to decide whether a quarter may use NOM charge (charging solar energy into the
 battery, `charge_source: "solar"`), the *predicted* solar production minus the *predicted*
@@ -302,7 +308,17 @@ still governs the live PID loop unchanged.
    e.g. `nom_charge_min_surplus_w = max(new setting, min_control_power_w)`, so the plan sensor
    shows the threshold actually used.
 
-### 10.3 Planner usage of the NOM-charge surplus gate (decided)
+### 10.3 Planner usage of the NOM-charge surplus gate (decided) — **IMPLEMENTED** (commit `6dcdbce`)
+
+Implemented as decided: gate lives in `plan_quarters` (solar surplus energy is 0 for gated
+slots, so no `solar_cycle` charge is planned there, including the current quarter);
+`current_plan_dispatch` does not re-check it at execution; every plan slot carries
+`surplus_forecast_w` (= `predicted_solar_w − predicted_house_w`, `null` when either is
+missing). `plan_quarters` takes `house_forecast_w` (per-slot, `None` entry = unknown → gated)
+and the effective threshold; the coordinator aligns `demand_details` slots to the price
+quarters and adds the slot fields.
+
+**Original spec:**
 
 Decisions (resolving the former open questions):
 
@@ -347,7 +363,16 @@ matches solar−house; `current_plan_dispatch` unchanged (still caps at live sur
 threshold re-check); effective threshold = max(new setting, min_control_power_w) passed by
 coordinator; plan refresh triggered when `nom_charge_min_surplus_w` changes.
 
-### 10.4 New setting sensor: minimum predicted demand for NOM discharge (planner-only)
+### 10.4 New setting sensor: minimum predicted demand for NOM discharge (planner-only) — **IMPLEMENTED** (commit `6dcdbce`)
+
+Implemented as specced: number `nom_discharge_min_demand_w` (W, 0–5000, step 50, default 0), NL
+"Minimaal voorspeld huisverbruik voor NOM-ontladen (W)". Below the export reserve the per-slot
+`sale_limit` in `plan_quarters` uses `house_forecast_w − solar_w` and is 0 where the predicted
+demand is missing or ≤ `max(setting, min_control_power_w)`; the coordinator's `discharge_mode`
+annotation uses the per-slot predicted demand + threshold; slots carry `demand_forecast_w`;
+plan metadata `nom_discharge_min_demand_w`. No execution-time re-validation.
+
+**Original spec:**
 
 **Why:** mirror of §10.2/§10.3 for the discharge side. NOM discharge delivers power to cover the
 house; if the *predicted* house demand for a slot is too small, the delivered power would be
