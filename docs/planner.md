@@ -338,3 +338,55 @@ solar forecast → slot not solar-chargeable; `surplus_forecast_w` present on ou
 matches solar−house; `current_plan_dispatch` unchanged (still caps at live surplus/PV, no
 threshold re-check); effective threshold = max(new setting, min_control_power_w) passed by
 coordinator; plan refresh triggered when `nom_charge_min_surplus_w` changes.
+
+### 10.4 New setting sensor: minimum predicted demand for NOM discharge (planner-only)
+
+**Why:** mirror of §10.2/§10.3 for the discharge side. NOM discharge delivers power to cover the
+house; if the *predicted* house demand for a slot is too small, the delivered power would be
+below what the inverter can regulate, so NOM discharge should not be planned there. The planner
+input is `max(new setting, SET_MIN_CONTROL_POWER)` — never below the existing
+"Minimaal te regelen vermogen (beide richtingen)" (`min_control_power_w`, default 200 W).
+
+**Sensor definition:**
+
+1. New number setting `SET_NOM_DISCHARGE_MIN_DEMAND_W` (key `nom_discharge_min_demand_w`):
+   - unit **W**, range 0–5000, step 50;
+   - default / init value **0 W** — same reasoning as §10.2: the effective threshold is
+     `max(0, SET_MIN_CONTROL_POWER)` = 200 W, i.e. no extra margin by default;
+   - entry in `SETTING_DEFAULTS` (`const.py:96`) and a `NexusNumberDescription` in `number.py`
+     (`translation_key` = key);
+   - translations in `strings.json` / `en.json` / `nl.json`, e.g. NL
+     "Minimaal voorspeld huisverbruik voor NOM-ontladen (W)" (EN "Minimum predicted house demand
+     for NOM discharge (W)");
+   - added to the `_quarter_refresh_pending` key list in `set_setting()` (`coordinator.py:382`).
+2. **Semantics (planner-only):** for each plan slot, a slot is eligible for NOM discharge
+   (`discharge_mode == "nom"`) only if
+   `predicted_house_w(slot) > max(SET_NOM_DISCHARGE_MIN_DEMAND_W, SET_MIN_CONTROL_POWER)`
+   (strictly above), where `predicted_house_w(slot)` = `demand_details["slots"][i]["total_w"]`
+   (complete house usage incl. heatpump, W per quarter). If the demand prediction is missing for
+   a slot → NOM discharge is **not** allowed for that slot (export-mode discharge is unaffected).
+3. **Same enforcement rules as §10.3:** enforced in `plan_quarters` at planning time only
+   (including the currently running quarter); `current_plan_dispatch` does **not** re-check the
+   threshold at execution (it keeps its live caps: NOM discharge ≤ measured demand, ≤ limits);
+   the live `SET_MIN_CONTROL_POWER` PID floor is unchanged.
+4. **Planner mechanics:**
+   - `plan_quarters` reuses the per-slot `house_forecast_w` list from §10.3 and gets
+     `nom_discharge_min_demand_w` (effective threshold, computed by the caller). The per-slot
+     `sale_limit` (discharge cap below the export reserve) switches from the constant
+     `house_load_w` to the per-slot forecast: `sale_limit[i] = max(0, house_forecast_w[i] −
+     solar_w[i])`, and is 0 for slots where `house_forecast_w[i] ≤ threshold` (no NOM discharge
+     planned there). Discharge above the export reserve (export mode) is not gated.
+   - Coordinator slot annotation (`coordinator.py:1366-1381`) uses the per-slot predicted demand:
+     `discharge_mode = "nom" if 0 < power_w <= demand_forecast_w and demand_forecast_w >
+     threshold else "export" if power_w > 0 else "none"`.
+   - Every plan slot additionally carries `demand_forecast_w` (per-slot predicted house demand,
+     `null` when missing) next to `surplus_forecast_w` from §10.3, so the value that triggered
+     (or blocked) NOM discharge is visible in the plan sensor attributes for debugging/graphing.
+   - Plan metadata gets `nom_discharge_min_demand_w` = effective threshold.
+5. `current_plan_dispatch` and `_async_control`: **no changes** for this feature.
+
+**Tests to add:** slots with predicted demand ≤ threshold get no NOM discharge (sale_limit 0),
+slots above get NOM discharge capped at predicted demand − solar; strict boundary (`>`);
+missing demand forecast → no NOM discharge but export unaffected; `demand_forecast_w` on output
+slots; `current_plan_dispatch` unchanged; effective threshold = max(new, min_control_power_w);
+refresh on setting change.
