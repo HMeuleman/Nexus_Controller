@@ -145,6 +145,7 @@
       "powersave_enabled": {"name": "Inverter powersave"},
       "control_enabled": {"name": "Battery control enabled"},
       "planner_override_enabled": {"name": "Planner"},
+    "solar_ml_planner_enabled": {"name": "Use ML solar hourly forecast in planner"},
       "manual_charge": {"name": "Manual maximum charge"},
       "manual_discharge": {"name": "Manual maximum discharge"},
       "export_includes_tax": {"name": "Exported energy paid including tax"}

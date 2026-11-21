@@ -70,6 +70,7 @@ SET_EXPORT_INCLUDES_TAX: Final = "export_includes_tax"
 SET_CONTROL_ENABLED: Final = "control_enabled"
 SET_PLANNER_OVERRIDE: Final = "planner_override_enabled"
 SET_POWERSAVE_ENABLED: Final = "powersave_enabled"
+SET_SOLAR_ML_PLANNER: Final = "solar_ml_planner_enabled"
 SET_POWERSAVE_COOLDOWN: Final = "powersave_cooldown_min"
 SET_POWERSAVE_LEAD: Final = "powersave_lead_min"
 SET_POWERSAVE_INTERVAL: Final = "powersave_maintenance_interval_h"
@@ -118,6 +119,7 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_CONTROL_ENABLED: False,
     SET_PLANNER_OVERRIDE: True,
     SET_POWERSAVE_ENABLED: False,
+    SET_SOLAR_ML_PLANNER: True,
     SET_POWERSAVE_COOLDOWN: 10.0,
     SET_POWERSAVE_LEAD: 5.0,
     SET_POWERSAVE_INTERVAL: 24.0,

@@ -1033,7 +1033,8 @@ def test_diagnostic_plan_is_read_only_and_exposes_quarters():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda now: {},
+        _experimental_solar_quarters=lambda now, source="ml": {},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
 
@@ -1073,7 +1074,8 @@ def test_future_plan_uses_battery_limit_not_live_phase_limits(limits):
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 10.0, "tax_used": 0.0}
 
@@ -1141,7 +1143,8 @@ def test_long_forecast_near_quarter_end_ignores_temporary_phase_cap():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 12.0, "tax_used": 0.0}
 
@@ -1184,7 +1187,8 @@ def test_current_commitment_uses_live_limit_but_future_plan_uses_10kw(power, lim
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.80)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={
             "slots": [{
                 "forecast_start": start.isoformat(),
@@ -1226,7 +1230,8 @@ def test_unknown_active_direction_limit_blocks_soc_projection(power, limits):
             SET_EXPORT_INCLUDES_TAX: True,
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={"slots": [{
             "forecast_start": start.isoformat(),
             "price_eur_kwh": 0.40,
@@ -1268,7 +1273,8 @@ def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mod
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={
             "minimum_earnings_eur_kwh": 0.15,
             "slots": [{
@@ -1362,7 +1368,8 @@ def test_changed_earnings_reoptimizes_future_quarters():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={
             "minimum_earnings_eur_kwh": 0.15,
             "slots": [{
@@ -1465,7 +1472,8 @@ def test_retained_export_projection_respects_power_cap_and_reserve(soc, limit, p
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={
             "minimum_earnings_eur_kwh": 0.15,
             "slots": [{
@@ -1699,7 +1707,8 @@ def test_diagnostic_planner_uses_conditional_export_reserve():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 10.0, "tax_used": 0.11}
 
@@ -1752,7 +1761,8 @@ def test_coordinator_plans_from_actual_below_minimum_soc(active_power):
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda moment: {},
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
         experimental_quarter_plan=existing,
     )
     data = {CONF_BATTERY_SOC: 5.0, "tax_used": 0.0}
@@ -2547,7 +2557,8 @@ def test_startup_plan_recovers_after_forecast_becomes_available(monkeypatch):
             hass=SimpleNamespace(
                 async_create_task=asyncio.create_task, async_add_executor_job=executor
             ),
-            _experimental_solar_quarters=lambda moment: {},
+            _experimental_solar_quarters=lambda moment, source="ml": {},
+            _planner_solar_source=lambda: "ml",
             experimental_quarter_plan={},
             _quarter_task=None,
             _quarter_last_start=None,
@@ -2850,7 +2861,8 @@ def test_real_diagnostic_does_not_clear_valid_plan_before_executor_finishes():
                 state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)
             ),
             hass=SimpleNamespace(async_add_executor_job=executor),
-            _experimental_solar_quarters=lambda now: {},
+            _experimental_solar_quarters=lambda now, source="ml": {},
+            _planner_solar_source=lambda: "ml",
         )
         data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
         task = asyncio.create_task(
@@ -2885,7 +2897,8 @@ def test_diagnostic_only_uses_complete_solar_forecast():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=1.0)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda now: {start: 1.25, second: 0.0},
+        _experimental_solar_quarters=lambda now, source="ml": {start: 1.25, second: 0.0},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
     asyncio.run(
@@ -2893,7 +2906,7 @@ def test_diagnostic_only_uses_complete_solar_forecast():
     )
     complete = coordinator.experimental_quarter_plan
 
-    coordinator._experimental_solar_quarters = lambda now: {start: 1.25}
+    coordinator._experimental_solar_quarters = lambda now, source="ml": {start: 1.25}
     asyncio.run(
         NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
     )
@@ -2923,7 +2936,8 @@ def test_diagnostic_scales_current_quarter_solar_to_remaining_time():
         },
         tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=1.0)),
         hass=SimpleNamespace(async_add_executor_job=executor),
-        _experimental_solar_quarters=lambda now: {start: 1.0, second: 0.0},
+        _experimental_solar_quarters=lambda now, source="ml": {start: 1.0, second: 0.0},
+        _planner_solar_source=lambda: "ml",
     )
     data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
 

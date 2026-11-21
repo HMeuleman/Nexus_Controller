@@ -8,7 +8,7 @@ import math
 import time
 import traceback
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from homeassistant.components import persistent_notification
 from homeassistant.components.recorder.statistics import (
@@ -92,6 +92,7 @@ from .const import (
     SET_POWERSAVE_MIN_SOC,
     SET_RESERVED_ROOM,
     SET_SOLAR_BLOCK,
+    SET_SOLAR_ML_PLANNER,
     SET_TAX,
     SET_WRITEDOWN_RATE,
     SET_WRITEDOWN_SOC,
@@ -387,6 +388,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             SET_EXPORT_INCLUDES_TAX,
             SET_TAX,
             SET_RESERVED_ROOM,
+            SET_SOLAR_ML_PLANNER,
         ) and self.settings.get(key) != value:
             self._quarter_refresh_pending = True
         self.settings[key] = value
@@ -611,8 +613,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             }
             return
         # ML hourly forecast for the current quarter, in W, independent of the
-        # internal forecaster: kWh per quarter * 1000 / 0.25 h.
-        ml_quarters = self._experimental_solar_quarters(now)
+        # internal forecaster and of the planner source switch: kWh per quarter * 1000 / 0.25 h.
+        ml_quarters = self._experimental_solar_quarters(now, source="ml")
         now_utc = now.astimezone(dt_util.UTC)
         quarter_start = now_utc.replace(
             minute=now_utc.minute // 15 * 15, second=0, microsecond=0
@@ -1222,7 +1224,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             else self.price_forecast_taxes.get(start, float(self.settings[SET_TAX]))
             for start, _, _ in forecast
         ]
-        solar_quarters = self._experimental_solar_quarters(now)
+        solar_source = self._planner_solar_source()
+        solar_quarters = self._experimental_solar_quarters(now, solar_source)
         solar_values = [
             solar_quarters[start] * duration / 0.25 if start in solar_quarters else None
             for start, _, duration in forecast
@@ -1329,6 +1332,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "efficiency_model": "fixed 97% per charge and discharge",
             "planning_power_limit_w": MAX_BATTERY_POWER_W,
             "solar_included": solar_complete,
+            "solar_source": solar_source,
             "limitations": (
                 "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
                 "unless forecast is complete; missing forecast tax uses fallback; "
@@ -1381,13 +1385,43 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     self._quarter_commitment = self.experimental_quarter_plan["slots"][0].copy()
         data["experimental_quarter_plan"] = "experimental"
 
-    def _experimental_solar_quarters(self, now: datetime) -> dict[datetime, float]:
-        """Read selected Solar ML hourly forecasts for diagnostics, without guessing entity IDs."""
+    def _planner_solar_source(self) -> str:
+        """Which solar forecast feeds the planner: 'ml', 'internal' or 'none'."""
+        ml_configured = all(
+            self.configured_entity_id(key)
+            for key in (CONF_SOLAR_HOURLY_TODAY, CONF_SOLAR_HOURLY_TOMORROW)
+        )
+        internal_ready = bool(
+            self._solar_forecast_enabled and (self.solar_details.get("slots") or [])
+        )
+        if bool(self.settings.get(SET_SOLAR_ML_PLANNER, True)) and ml_configured:
+            return "ml"
+        if internal_ready:
+            return "internal"
+        return "none"
+
+    def _experimental_solar_quarters(
+        self, now: datetime, source: str = "ml"
+    ) -> dict[datetime, float]:
+        """Solar quarter kWh for the planner ('ml' or 'internal'), or ML for the now-sensor."""
+        if source not in ("ml", "internal"):
+            return {}
         timezone = dt_util.get_time_zone(self.hass.config.time_zone)
         if timezone is None:
             return {}
         today = now.astimezone(timezone).date()
         quarters: dict[datetime, float] = {}
+        if source == "internal":
+            for slot in self.solar_details.get("slots") or []:
+                try:
+                    start = datetime.fromisoformat(slot["start"])
+                    pv_w = slot.get("pv_w")
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+                if pv_w is None or start.tzinfo is None:
+                    continue
+                quarters[start.astimezone(UTC)] = float(pv_w) * 0.25 / 1000
+            return quarters
         for key, day_offset, attribute in (
             (CONF_SOLAR_HOURLY_TODAY, 0, "hourly_forecast"),
             (CONF_SOLAR_HOURLY_TOMORROW, 1, "hours"),

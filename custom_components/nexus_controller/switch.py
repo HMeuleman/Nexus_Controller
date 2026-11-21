@@ -23,6 +23,7 @@ from .const import (
     SET_EXPORT_INCLUDES_TAX,
     SET_PLANNER_OVERRIDE,
     SET_POWERSAVE_ENABLED,
+    SET_SOLAR_ML_PLANNER,
 )
 from .coordinator import NexusCoordinator
 
@@ -41,6 +42,7 @@ async def async_setup_entry(
             NexusControlSwitch(coordinator),
             NexusExportTaxSwitch(coordinator),
             NexusPlannerSwitch(coordinator),
+            NexusSolarMlPlannerSwitch(coordinator),
             NexusPowerSaveSwitch(coordinator),
             NexusManualSwitch(coordinator, MANUAL_CHARGE, "charge"),
             NexusManualSwitch(coordinator, MANUAL_DISCHARGE, "discharge"),
@@ -145,6 +147,23 @@ class NexusPlannerSwitch(_NexusSwitch):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Return to the existing strategy."""
         await self.coordinator.async_set_planner_override(False)
+
+
+class NexusSolarMlPlannerSwitch(_NexusSwitch):
+    """Select the ML solar hourly forecast as planner input instead of the internal forecaster."""
+
+    _key = SET_SOLAR_ML_PLANNER
+    _attr_entity_category = EntityCategory.CONFIG
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Use the ML hourly forecast for planning."""
+        self.coordinator.set_setting(self._key, True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Use the internal learned solar forecast for planning."""
+        self.coordinator.set_setting(self._key, False)
+        self.async_write_ha_state()
 
 
 class NexusPowerSaveSwitch(_NexusSwitch, RestoreEntity):

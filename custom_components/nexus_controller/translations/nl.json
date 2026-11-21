@@ -151,6 +151,7 @@
       "powersave_enabled": {"name": "Omvormer energiebesparing"},
       "control_enabled": {"name": "Batterijsturing ingeschakeld"},
       "planner_override_enabled": {"name": "Planner"},
+    "solar_ml_planner_enabled": {"name": "Gebruik ML zonne-uurverwachting in planner"},
       "manual_charge": {"name": "Handmatig maximaal laden"},
       "manual_discharge": {"name": "Handmatig maximaal ontladen"},
       "export_includes_tax": {"name": "Teruglevering vergoed incl. belasting"}

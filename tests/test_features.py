@@ -10,6 +10,7 @@ from custom_components.nexus_controller.charging import inverter_efficiency, pla
 from custom_components.nexus_controller.const import (
     CONF_SOLAR_HOURLY_TODAY,
     CONF_SOLAR_HOURLY_TOMORROW,
+    SET_SOLAR_ML_PLANNER,
 )
 from custom_components.nexus_controller.coordinator import NexusCoordinator
 from custom_components.nexus_controller.sample_rate import SampleIntervalEstimator
@@ -215,20 +216,28 @@ def test_solar_forecast_skips_invalid_missing_and_dst_ambiguous_hours():
     assert hourly_forecast_quarters(None, day=date(2026, 11, 10), timezone=UTC) == {}
 
 
-def _solar_coordinator(states: dict, configured: dict) -> SimpleNamespace:
+def _solar_coordinator(
+    states: dict,
+    configured: dict,
+    settings: dict | None = None,
+    solar_details: dict | None = None,
+    solar_enabled: bool = False,
+) -> SimpleNamespace:
     coordinator = SimpleNamespace(
         hass=SimpleNamespace(
             states=SimpleNamespace(get=states.get),
             config=SimpleNamespace(time_zone="Europe/Amsterdam"),
         ),
-        _solar_forecast_enabled=False,
+        settings={SET_SOLAR_ML_PLANNER: True, **(settings or {})},
+        _solar_forecast_enabled=solar_enabled,
+        solar_details={"slots": [], **(solar_details or {})},
         _solar_history=SolarHistory(),
         _solar_store=SimpleNamespace(async_delay_save=lambda *args, **kwargs: None),
         _solar_sources=lambda: ["sensor.pv"],
         configured_entity_id=configured.get,
     )
-    coordinator._experimental_solar_quarters = lambda now: (
-        NexusCoordinator._experimental_solar_quarters(coordinator, now)
+    coordinator._experimental_solar_quarters = lambda now, source="ml": (
+        NexusCoordinator._experimental_solar_quarters(coordinator, now, source)
     )
     return coordinator
 
@@ -272,6 +281,75 @@ def test_ml_solar_forecast_now_is_none_without_configured_ml_entities():
         coordinator, data, datetime(2026, 11, 20, 10, 7, tzinfo=UTC)
     )
     assert data["solar_ml_forecast_now"] is None
+
+
+_ML_STATES = {
+    "sensor.pv": SimpleNamespace(state="1500", attributes={"unit_of_measurement": "W"}),
+    "sensor.ml_today": SimpleNamespace(
+        state="0.8",
+        attributes={"unit_of_measurement": "kWh", "hourly_forecast": {"11:00": 0.8}},
+    ),
+    "sensor.ml_tomorrow": SimpleNamespace(
+        state="7.0",
+        attributes={"unit_of_measurement": "kWh", "hours": {"11:00": 1.6}},
+    ),
+}
+_ML_CONFIGURED = {
+    CONF_SOLAR_HOURLY_TODAY: "sensor.ml_today",
+    CONF_SOLAR_HOURLY_TOMORROW: "sensor.ml_tomorrow",
+}
+
+
+def test_planner_solar_source_prefers_ml_then_falls_back_to_internal():
+    coordinator = _solar_coordinator(
+        _ML_STATES,
+        _ML_CONFIGURED,
+        solar_details={"slots": [{"start": "2026-11-20T10:00:00+00:00", "pv_w": 800.0}]},
+        solar_enabled=True,
+    )
+    # Switch on (default) + ML configured -> ml.
+    assert NexusCoordinator._planner_solar_source(coordinator) == "ml"
+    # Switch off -> internal forecaster.
+    coordinator.settings[SET_SOLAR_ML_PLANNER] = False
+    assert NexusCoordinator._planner_solar_source(coordinator) == "internal"
+    # Switch on but ML not configured -> internal fallback.
+    coordinator.settings[SET_SOLAR_ML_PLANNER] = True
+    coordinator.configured_entity_id = {}.get
+    assert NexusCoordinator._planner_solar_source(coordinator) == "internal"
+    # Nothing available -> none.
+    coordinator._solar_forecast_enabled = False
+    assert NexusCoordinator._planner_solar_source(coordinator) == "none"
+
+
+def test_internal_solar_quarters_come_from_solar_details_slots():
+    coordinator = _solar_coordinator({}, {})
+    coordinator.solar_details = {
+        "slots": [
+            {"start": "2026-11-20T10:00:00+00:00", "pv_w": 800.0},
+            {"start": "2026-11-20T10:15:00+00:00", "pv_w": None},
+            {"start": "2026-11-20T10:30:00+00:00", "pv_w": 400.0},
+        ]
+    }
+    now = datetime(2026, 11, 20, 11, 0, tzinfo=UTC)
+    quarters = NexusCoordinator._experimental_solar_quarters(coordinator, now, "internal")
+    # 800 W for a quarter = 0.2 kWh; the null slot is skipped.
+    assert quarters == {
+        datetime(2026, 11, 20, 10, 0, tzinfo=UTC): pytest.approx(0.2),
+        datetime(2026, 11, 20, 10, 30, tzinfo=UTC): pytest.approx(0.1),
+    }
+    assert NexusCoordinator._experimental_solar_quarters(coordinator, now, "none") == {}
+
+
+def test_ml_now_sensor_records_ml_even_when_planner_source_is_internal():
+    coordinator = _solar_coordinator(
+        _ML_STATES, _ML_CONFIGURED, settings={SET_SOLAR_ML_PLANNER: False}
+    )
+    data: dict = {}
+    NexusCoordinator._update_solar_forecast(
+        coordinator, data, datetime(2026, 11, 20, 10, 7, tzinfo=UTC)
+    )
+    # Planner would use internal now, but the ML now-sensor must still record the ML value.
+    assert data["solar_ml_forecast_now"] == pytest.approx(800.0)
 
 
 def test_solar_surplus_subtracts_expected_house_use():
