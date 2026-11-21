@@ -252,3 +252,49 @@ being recorded for historical comparison.
 **Tests to add:** planner uses internal slots when switch OFF even with ML entities configured;
 uses ML when ON; ML `_nu` sensor still updates when switch OFF; `solar_source` metadata correct;
 fallback to internal when ML entities missing; plan refresh triggered on switch change.
+
+### 10.2 New setting sensor: minimum predicted surplus for NOM charge (planner-only)
+
+**Why:** to decide whether a quarter may use NOM charge (charging solar energy into the
+battery, `charge_source: "solar"`), the *predicted* solar production minus the *predicted*
+complete house usage (house + heatpump) must exceed a threshold. That threshold is
+`max(new setting, SET_MIN_CONTROL_POWER)` — i.e. never below the existing
+"Minimaal te regelen vermogen (beide richtingen)" (`min_control_power_w`, default 200 W), which
+still governs the live PID loop unchanged.
+
+**Sensor definition (this is the part being specced now; planner usage is §10.3, to be discussed):**
+
+1. New number setting `SET_NOM_CHARGE_MIN_SURPLUS_W` (key `nom_charge_min_surplus_w`):
+   - unit **W**, range 0–5000, step 50 (same shape as `reserved_room_w`);
+   - proposed default **500 W** (open for discussion);
+   - entry in `SETTING_DEFAULTS` (`const.py:96`) and a `NexusNumberDescription` in `number.py`
+     with `translation_key` = the key, so it appears as a normal config number entity;
+   - translations in `strings.json` / `en.json` / `nl.json`, e.g. NL
+     "Minimaal voorspeld zonne-overschot voor NOM-laden (W)" (EN "Minimum predicted solar surplus
+     for NOM charging (W)");
+   - added to the `_quarter_refresh_pending` key list in `set_setting()` (`coordinator.py:382`)
+     so changing it re-plans.
+2. **Semantics (planner-only):** for each plan slot,
+   `predicted_surplus_w(slot) = predicted_solar_w(slot) − predicted_house_w(slot)` where
+   - `predicted_solar_w` comes from the planner's selected solar source per §10.1 (ML quarters or
+     internal `solar_details` slots, converted to W: quarter kWh × 4000);
+   - `predicted_house_w` comes from `self.demand_details["slots"][i]["total_w"]`
+     (`demand.py:410` forecast — already the *complete* house usage: baseline + heatpump
+     forecast, in W per quarter).
+   The slot is eligible for NOM charge only if
+   `predicted_surplus_w(slot) > max(SET_NOM_CHARGE_MIN_SURPLUS_W, SET_MIN_CONTROL_POWER)`
+   (strictly above).
+3. If either prediction is missing for a slot (solar omitted, demand `partial`, ML not
+   configured, …) the surplus is unknown → NOM charge is **not** allowed for that slot.
+4. The new sensor does **not** change live control: `SET_MIN_CONTROL_POWER` still gates the PID
+   in `_async_control` exactly as today; the new setting only feeds the planner.
+5. Observability: expose the effective threshold in the `experimental_quarter_plan` metadata,
+   e.g. `nom_charge_min_surplus_w = max(new setting, min_control_power_w)`, so the plan sensor
+   shows the threshold actually used.
+
+**Open questions for the planner phase (§10.3, to be discussed before implementation):**
+where to enforce the gate — inside `plan_quarters` (cap/remove `solar_cycle` charge power when
+the slot's predicted surplus is below the threshold), in `current_plan_dispatch` (refuse
+`charge_source == "solar"` at execution time), or both; whether the gate also applies to the
+currently running quarter; and whether plan slots should carry the per-slot predicted surplus
+(e.g. `surplus_forecast_w`) for debugging/graphing.
