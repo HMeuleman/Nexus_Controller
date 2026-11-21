@@ -78,6 +78,8 @@ from .const import (
     SET_MIN_CONTROL_POWER,
     SET_MIN_DISCHARGE_SOC,
     SET_MIN_EARNINGS,
+    SET_NOM_CHARGE_MIN_SURPLUS_W,
+    SET_NOM_DISCHARGE_MIN_DEMAND_W,
     SET_PID_KD,
     SET_PID_KI,
     SET_PID_KP,
@@ -389,6 +391,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             SET_TAX,
             SET_RESERVED_ROOM,
             SET_SOLAR_ML_PLANNER,
+            SET_NOM_CHARGE_MIN_SURPLUS_W,
+            SET_NOM_DISCHARGE_MIN_DEMAND_W,
         ) and self.settings.get(key) != value:
             self._quarter_refresh_pending = True
         self.settings[key] = value
@@ -1226,6 +1230,29 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         ]
         solar_source = self._planner_solar_source()
         solar_quarters = self._experimental_solar_quarters(now, solar_source)
+        # Per-slot predicted house demand (incl. heatpump), aligned to the price quarters.
+        demand_details = getattr(self, "demand_details", None) or {}
+        demand_map = {}
+        for demand_slot in demand_details.get("slots") or []:
+            try:
+                demand_map[datetime.fromisoformat(demand_slot["start"]).astimezone(UTC)] = (
+                    demand_slot.get("total_w")
+                )
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        demand_available = bool(demand_details.get("slots"))
+        house_forecast_w = [
+            demand_map.get(start.astimezone(UTC)) for start, _, _ in forecast
+        ]
+        # Without a demand model, fall back to the constant average inside the planner.
+        planner_house_w = house_forecast_w if demand_available else None
+        min_control_w = float(self.settings.get(SET_MIN_CONTROL_POWER, 0.0))
+        nom_charge_min = max(
+            float(self.settings.get(SET_NOM_CHARGE_MIN_SURPLUS_W, 0.0)), min_control_w
+        )
+        nom_discharge_min = max(
+            float(self.settings.get(SET_NOM_DISCHARGE_MIN_DEMAND_W, 0.0)), min_control_w
+        )
         solar_values = [
             solar_quarters[start] * duration / 0.25 if start in solar_quarters else None
             for start, _, duration in forecast
@@ -1316,6 +1343,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     solar_kwh=planning_solar,
                     durations_hours=[duration for _, _, duration in planning_forecast],
                     export_reserve_soc_pct=export_reserve,
+                    house_forecast_w=(
+                        planner_house_w[1:]
+                        if active is not None and planner_house_w is not None
+                        else planner_house_w
+                    ),
+                    nom_charge_min_surplus_w=nom_charge_min,
+                    nom_discharge_min_demand_w=nom_discharge_min,
                 )
             )
         except ValueError:
@@ -1333,6 +1367,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "planning_power_limit_w": MAX_BATTERY_POWER_W,
             "solar_included": solar_complete,
             "solar_source": solar_source,
+            "nom_charge_min_surplus_w": round(nom_charge_min, 1),
+            "nom_discharge_min_demand_w": round(nom_discharge_min, 1),
             "limitations": (
                 "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
                 "unless forecast is complete; missing forecast tax uses fallback; "
@@ -1367,16 +1403,30 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 soc_pct=round(initial_soc, 2),
             )
             self.experimental_quarter_plan["slots"].insert(0, active)
-        for slot, solar in zip(self.experimental_quarter_plan["slots"], solar_values, strict=True):
+        for slot, solar, house_w_slot in zip(
+            self.experimental_quarter_plan["slots"], solar_values, house_forecast_w, strict=True
+        ):
             slot["solar_forecast_kwh"] = solar
-            demand = max(
-                0.0,
-                (house_load or 0.0) - (solar or 0.0) * 1000 / slot["duration_hours"],
+            slot["demand_forecast_w"] = house_w_slot
+            solar_w_slot = solar * 1000 / slot["duration_hours"] if solar is not None else None
+            slot["surplus_forecast_w"] = (
+                round(solar_w_slot - house_w_slot, 1)
+                if solar_w_slot is not None and house_w_slot is not None
+                else None
             )
+            # Missing demand prediction (model present, slot unknown) blocks NOM discharge.
+            if demand_available and house_w_slot is None:
+                demand_slot = 0.0
+            else:
+                demand_slot = max(
+                    0.0,
+                    (house_w_slot if house_w_slot is not None else (house_load or 0.0))
+                    - (solar_w_slot or 0.0),
+                )
             if slot is not active:
                 slot["discharge_mode"] = (
                     "nom"
-                    if 0 < slot["power_w"] <= demand
+                    if 0 < slot["power_w"] <= demand_slot and demand_slot > nom_discharge_min
                     else "export"
                     if slot["power_w"] > 0
                     else "none"
@@ -1412,7 +1462,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         today = now.astimezone(timezone).date()
         quarters: dict[datetime, float] = {}
         if source == "internal":
-            for slot in self.solar_details.get("slots") or []:
+            slots = self.solar_details.get("slots") or []
+            for slot in slots:
                 try:
                     start = datetime.fromisoformat(slot["start"])
                     pv_w = slot.get("pv_w")
@@ -1421,6 +1472,20 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 if pv_w is None or start.tzinfo is None:
                     continue
                 quarters[start.astimezone(UTC)] = float(pv_w) * 0.25 / 1000
+            if slots:
+                # The in-progress quarter is not in the slot list; estimate it
+                # with the first upcoming slot so the current plan slot is covered.
+                try:
+                    first_pv = slots[0].get("pv_w")
+                    if first_pv is not None:
+                        current = now.astimezone(UTC).replace(
+                            minute=now.astimezone(UTC).minute // 15 * 15,
+                            second=0,
+                            microsecond=0,
+                        )
+                        quarters.setdefault(current, float(first_pv) * 0.25 / 1000)
+                except (TypeError, ValueError, AttributeError):
+                    pass
             return quarters
         for key, day_offset, attribute in (
             (CONF_SOLAR_HOURLY_TODAY, 0, "hourly_forecast"),

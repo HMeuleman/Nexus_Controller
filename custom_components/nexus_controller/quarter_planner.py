@@ -198,6 +198,9 @@ def plan_quarters(
     durations_hours: list[float] | None = None,
     use_power_efficiency: bool = False,
     export_reserve_soc_pct: float | None = None,
+    house_forecast_w: list[float | None] | None = None,
+    nom_charge_min_surplus_w: float = 0.0,
+    nom_discharge_min_demand_w: float = 0.0,
 ) -> QuarterPlan:
     """Optimize complete, nonoverlapping grid cycles with estimated efficiency.
 
@@ -222,6 +225,9 @@ def plan_quarters(
         *(solar_kwh or ()),
         *(durations_hours or ()),
         *(value for value in (export_reserve_soc_pct,) if value is not None),
+        *(value for value in (house_forecast_w or ()) if value is not None),
+        nom_charge_min_surplus_w,
+        nom_discharge_min_demand_w,
     )
     if (
         not all(math.isfinite(value) for value in numbers)
@@ -251,6 +257,18 @@ def plan_quarters(
             and (
                 len(export_taxes_eur_per_kwh) != len(prices)
                 or any(tax < 0 for tax in export_taxes_eur_per_kwh)
+            )
+        )
+        or nom_charge_min_surplus_w < 0
+        or nom_discharge_min_demand_w < 0
+        or (
+            house_forecast_w is not None
+            and (
+                len(house_forecast_w) != len(prices)
+                or any(
+                    value is not None and (not math.isfinite(value) or value < 0)
+                    for value in house_forecast_w
+                )
             )
         )
     ):
@@ -310,16 +328,39 @@ def plan_quarters(
     solar_cost_prefix = [0.0]
     solar_cell_prefix = [0.0]
     charge_cell_prefix = [0.0]
+    # Per-slot house demand (forecast) with the constant average as fallback,
+    # and per-slot solar power in W. A provided-but-None house entry means the
+    # prediction is unknown for that slot (house_known=False) and gates apply.
+    house_w = []
+    house_known = []
+    for index in range(count):
+        if house_forecast_w is not None and house_forecast_w[index] is None:
+            house_w.append(house_load_w)
+            house_known.append(False)
+        else:
+            house_w.append(
+                house_forecast_w[index] if house_forecast_w is not None else house_load_w
+            )
+            house_known.append(True)
+    solar_w = [
+        solar_kwh[index] * 1000 / hours[index] if solar_kwh is not None else 0.0
+        for index in range(count)
+    ]
     solar_surplus = []
     for index in range(count):
-        energy = (
-            min(
-                max(0.0, solar_kwh[index] - house_load_w * hours[index] / 1000),
+        # NOM-charge gate: solar surplus usable for charging is zero when the
+        # prediction is missing or the predicted surplus does not exceed the threshold.
+        if (
+            solar_kwh is None
+            or not house_known[index]
+            or solar_w[index] - house_w[index] <= nom_charge_min_surplus_w
+        ):
+            energy = 0.0
+        else:
+            energy = min(
+                max(0.0, solar_kwh[index] - house_w[index] * hours[index] / 1000),
                 max_power_w * hours[index] / 1000,
             )
-            if solar_kwh is not None
-            else 0.0
-        )
         solar_surplus.append(energy)
         solar_prefix.append(solar_prefix[-1] + energy)
         solar_cost_prefix.append(solar_cost_prefix[-1] + energy * (prices[index] - taxes[index]))
@@ -434,11 +475,11 @@ def plan_quarters(
         return min(
             max_power_w,
             *(
-                max(
-                    0.0,
-                    house_load_w
-                    - ((solar_kwh[index] * 1000 / hours[index]) if solar_kwh is not None else 0.0),
-                )
+                # NOM-discharge gate: no NOM sale where the prediction is missing
+                # or the predicted demand does not exceed the threshold.
+                0.0
+                if not house_known[index] or house_w[index] <= nom_discharge_min_demand_w
+                else max(0.0, house_w[index] - solar_w[index])
                 for index in range(start, end)
             ),
         )

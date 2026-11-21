@@ -129,6 +129,8 @@
       "pid_start_error_w": {"name": "PID start deadband"},
       "pid_stop_error_w": {"name": "PID stop deadband"},
       "min_control_power_w": {"name": "Minimum power to control (both directions)"},
+      "nom_charge_min_surplus_w": {"name": "Minimum predicted solar surplus for NOM charging (W)"},
+      "nom_discharge_min_demand_w": {"name": "Minimum predicted house demand for NOM discharge (W)"},
       "discharge_offset_w": {"name": "Control offset (export when discharging, import when charging)"},
       "direction_delay_s": {"name": "Idle time before reversing direction"},
       "solar_block_discharge_w": {"name": "Solar production above which discharge is blocked"},

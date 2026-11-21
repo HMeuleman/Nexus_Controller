@@ -29,6 +29,8 @@ from custom_components.nexus_controller.const import (
     SET_MIN_CONTROL_POWER,
     SET_MIN_DISCHARGE_SOC,
     SET_MIN_EARNINGS,
+    SET_NOM_CHARGE_MIN_SURPLUS_W,
+    SET_NOM_DISCHARGE_MIN_DEMAND_W,
     SET_PLANNER_OVERRIDE,
     SET_RESERVED_ROOM,
     SET_TAX,
@@ -2995,3 +2997,128 @@ def test_second_cycle_only_when_it_is_profitable():
     assert two.profit_eur == pytest.approx(9.0)
     assert one.profit_eur == pytest.approx(5.0)
     assert all(power == 0 for power in one.power_w[8:24])
+
+
+def test_nom_charge_gate_blocks_solar_charge_at_or_below_threshold():
+    base = dict(
+        capacity_kwh=2.5,
+        initial_soc_pct=50.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.0,
+        export_tax_eur_per_kwh=0.11,
+        solar_kwh=[1.0, 0.0],
+    )
+    # Surplus slot0 = 4000 - 1000 = 3000 W > 200 W -> solar charge in slot 0.
+    allowed = plan_quarters(
+        [0.5, 0.55], house_forecast_w=[1000.0, 0.0], nom_charge_min_surplus_w=200.0, **base
+    )
+    assert allowed.charge_source[0] == "solar"
+    assert allowed.power_w[0] < 0
+    assert allowed.power_w[1] > 0
+    # Surplus 100 W <= 200 W threshold -> gated: no solar charge.
+    gated = plan_quarters(
+        [0.5, 0.55], house_forecast_w=[3900.0, 0.0], nom_charge_min_surplus_w=200.0, **base
+    )
+    assert gated.charge_source[0] != "solar"
+    # Boundary is strict: surplus == threshold is gated too.
+    boundary = plan_quarters(
+        [0.5, 0.55], house_forecast_w=[3800.0, 0.0], nom_charge_min_surplus_w=200.0, **base
+    )
+    assert boundary.charge_source[0] != "solar"
+    # Missing house prediction for the slot -> gated even with high solar.
+    missing = plan_quarters(
+        [0.5, 0.55], house_forecast_w=[None, 0.0], nom_charge_min_surplus_w=200.0, **base
+    )
+    assert missing.charge_source[0] != "solar"
+
+
+def test_nom_discharge_gate_blocks_sale_at_or_below_min_demand():
+    base = dict(
+        capacity_kwh=20.0,
+        initial_soc_pct=25.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.0,
+        export_tax_eur_per_kwh=0.0,
+        export_reserve_soc_pct=30.0,
+        initial_value_eur_per_kwh=0.0,
+    )
+    # Demand 3000 W > 200 W -> NOM discharge capped at 3000 W per slot.
+    allowed = plan_quarters(
+        [0.5] * 4, house_forecast_w=[3000.0] * 4, nom_discharge_min_demand_w=200.0, **base
+    )
+    assert allowed.power_w == pytest.approx((3000.0,) * 4)
+    # Predicted demand 150 W <= 200 W threshold -> no NOM discharge at all.
+    gated = plan_quarters(
+        [0.5] * 4, house_forecast_w=[150.0] * 4, nom_discharge_min_demand_w=200.0, **base
+    )
+    assert gated.power_w == (0.0,) * 4
+    # Boundary is strict: demand == threshold is gated.
+    boundary = plan_quarters(
+        [0.5] * 4, house_forecast_w=[200.0] * 4, nom_discharge_min_demand_w=200.0, **base
+    )
+    assert boundary.power_w == (0.0,) * 4
+    # Missing demand prediction -> no NOM discharge.
+    missing = plan_quarters(
+        [0.5] * 4, house_forecast_w=[None] * 4, nom_discharge_min_demand_w=200.0, **base
+    )
+    assert missing.power_w == (0.0,) * 4
+
+
+def test_plan_slots_carry_forecast_demand_surplus_and_effective_thresholds():
+    now = datetime(2026, 11, 9, 12, 5, tzinfo=UTC)
+    start = now.replace(minute=15)
+    second = start + timedelta(minutes=15)
+
+    async def executor(function):
+        return function()
+
+    coordinator = SimpleNamespace(
+        price_forecast=[(start, 0.20), (second, 0.70)],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_MIN_CONTROL_POWER: 200,
+            SET_NOM_CHARGE_MIN_SURPLUS_W: 0,
+            SET_NOM_DISCHARGE_MIN_DEMAND_W: 0,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
+        demand_details={
+            "slots": [
+                {"start": start.isoformat(), "total_w": 1500.0},
+                {"start": second.isoformat(), "total_w": 800.0},
+            ]
+        },
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda now, source="ml": {start: 0.5, second: 0.0},
+        _planner_solar_source=lambda: "ml",
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
+    )
+
+    plan = coordinator.experimental_quarter_plan
+    # Effective thresholds are max(setting, min_control_power_w).
+    assert plan["nom_charge_min_surplus_w"] == 200
+    assert plan["nom_discharge_min_demand_w"] == 200
+    assert plan["solar_source"] == "ml"
+    slot0, slot1 = plan["slots"]
+    assert slot0["demand_forecast_w"] == 1500.0
+    assert slot0["solar_forecast_kwh"] == pytest.approx(0.5)
+    # 0.5 kWh in a quarter = 2000 W; surplus = 2000 - 1500 = 500 W.
+    assert slot0["surplus_forecast_w"] == pytest.approx(500.0)
+    assert slot1["demand_forecast_w"] == 800.0
+    assert slot1["surplus_forecast_w"] == pytest.approx(-800.0)
+    # NOM annotation uses the per-slot predicted demand and the threshold.
+    expected_mode = (
+        "nom" if 0 < slot1["power_w"] <= 800.0 and 800.0 > 200 else "export"
+        if slot1["power_w"] > 0
+        else "none"
+    )
+    assert slot1["discharge_mode"] == expected_mode

@@ -332,10 +332,12 @@ def test_internal_solar_quarters_come_from_solar_details_slots():
     }
     now = datetime(2026, 11, 20, 11, 0, tzinfo=UTC)
     quarters = NexusCoordinator._experimental_solar_quarters(coordinator, now, "internal")
-    # 800 W for a quarter = 0.2 kWh; the null slot is skipped.
+    # 800 W for a quarter = 0.2 kWh; the null slot is skipped; the in-progress
+    # quarter (11:00) is estimated from the first upcoming slot.
     assert quarters == {
         datetime(2026, 11, 20, 10, 0, tzinfo=UTC): pytest.approx(0.2),
         datetime(2026, 11, 20, 10, 30, tzinfo=UTC): pytest.approx(0.1),
+        datetime(2026, 11, 20, 11, 0, tzinfo=UTC): pytest.approx(0.2),
     }
     assert NexusCoordinator._experimental_solar_quarters(coordinator, now, "none") == {}
 

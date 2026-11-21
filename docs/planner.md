@@ -201,7 +201,15 @@ planner functions are pure (no HA calls); all device writes go through the actua
 
 ## 10. To be implemented — feature specs
 
-### 10.1 Solar source override switch for the planner (internal vs ML)
+### 10.1 Solar source override switch for the planner (internal vs ML) — **IMPLEMENTED** (commit `8dc6c5e`)
+
+Implemented as specced: switch `solar_ml_planner_enabled` (default on), planner input branches in
+`_experimental_solar_quarters(now, source)` with `_planner_solar_source()` choosing
+`"ml"`/`"internal"`/`"none"`, plan metadata `solar_source`, ML now-sensor independent of the
+switch, plan refresh on change. Tests in `tests/test_features.py` (source selection, internal
+quarter mapping, ML now-sensor with switch off).
+
+**Original spec:**
 
 **Why:** today the planner takes the ML hourly forecast whenever the ML entities are configured
 (`_experimental_solar_quarters`, `coordinator.py:1372`). We want to keep ML as an option but be

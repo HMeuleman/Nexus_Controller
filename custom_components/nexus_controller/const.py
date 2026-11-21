@@ -56,6 +56,8 @@ SET_PID_KD: Final = "pid_kd"
 SET_PID_START_ERROR: Final = "pid_start_error_w"
 SET_PID_STOP_ERROR: Final = "pid_stop_error_w"
 SET_MIN_CONTROL_POWER: Final = "min_control_power_w"
+SET_NOM_CHARGE_MIN_SURPLUS_W: Final = "nom_charge_min_surplus_w"
+SET_NOM_DISCHARGE_MIN_DEMAND_W: Final = "nom_discharge_min_demand_w"
 SET_MIN_DISCHARGE_SOC: Final = "min_discharge_soc"
 SET_DIRECTION_DELAY: Final = "direction_delay_s"
 SET_SOLAR_BLOCK: Final = "solar_block_discharge_w"
@@ -107,6 +109,8 @@ SETTING_DEFAULTS: Final[dict[str, float | bool]] = {
     SET_PID_START_ERROR: 15.0,
     SET_PID_STOP_ERROR: 8.0,
     SET_MIN_CONTROL_POWER: 200.0,
+    SET_NOM_CHARGE_MIN_SURPLUS_W: 0.0,
+    SET_NOM_DISCHARGE_MIN_DEMAND_W: 0.0,
     SET_DISCHARGE_OFFSET: 50.0,
     SET_MIN_DISCHARGE_SOC: 10.0,
     SET_DIRECTION_DELAY: 75.0,

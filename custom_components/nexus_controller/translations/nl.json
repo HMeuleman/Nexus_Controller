@@ -135,6 +135,8 @@
       "pid_start_error_w": {"name": "PID startdeadband"},
       "pid_stop_error_w": {"name": "PID stopdeadband"},
       "min_control_power_w": {"name": "Minimaal te regelen vermogen (beide richtingen)"},
+      "nom_charge_min_surplus_w": {"name": "Minimaal voorspeld zonne-overschot voor NOM-laden (W)"},
+      "nom_discharge_min_demand_w": {"name": "Minimaal voorspeld huisverbruik voor NOM-ontladen (W)"},
       "discharge_offset_w": {"name": "Regel-offset (export bij ontladen, import bij laden)"},
       "direction_delay_s": {"name": "Rusttijd voor van richting wisselen"},
       "solar_block_discharge_w": {"name": "Zonneproductie waarboven ontladen wordt geblokkeerd"},
