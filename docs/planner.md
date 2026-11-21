@@ -294,9 +294,47 @@ still governs the live PID loop unchanged.
    e.g. `nom_charge_min_surplus_w = max(new setting, min_control_power_w)`, so the plan sensor
    shows the threshold actually used.
 
-**Open questions for the planner phase (§10.3, to be discussed before implementation):**
-where to enforce the gate — inside `plan_quarters` (cap/remove `solar_cycle` charge power when
-the slot's predicted surplus is below the threshold), in `current_plan_dispatch` (refuse
-`charge_source == "solar"` at execution time), or both; whether the gate also applies to the
-currently running quarter; and whether plan slots should carry the per-slot predicted surplus
-(e.g. `surplus_forecast_w`) for debugging/graphing.
+### 10.3 Planner usage of the NOM-charge surplus gate (decided)
+
+Decisions (resolving the former open questions):
+
+1. **Enforcement point: `plan_quarters` only, at planning time.** A slot whose predicted surplus
+   is not above the threshold can never be part of a `solar_cycle` charge block — the DP simply
+   gets no solar-charge option for that slot (equivalently: the solar surplus usable for charging
+   in that slot is treated as 0). This includes the currently running quarter, because the gate
+   is applied when the plan is generated, before any slot is executed.
+2. **No re-validation at execution time.** `current_plan_dispatch`
+   (`quarter_planner.py:63`, called from `coordinator.py:2228`) must **not** re-check the
+   threshold: it keeps its existing live safety caps (charge ≤ measured surplus, ≤ PV power,
+   ≤ limits) but trusts the plan's `charge_source == "solar"` decision as-is. The live
+   `SET_MIN_CONTROL_POWER` floor in `_async_control` also stays as-is.
+3. **Track the triggering value for debugging/graphing:** every plan slot carries
+   `surplus_forecast_w` = `predicted_solar_w − predicted_house_w` for that slot (`null` when
+   either prediction is missing). This is the exact value that made the planner choose (or not
+   choose) NOM charge for the slot, visible in the `experimenteel_kwartierplan` sensor attributes.
+
+**Implementation sketch:**
+
+- New `plan_quarters` parameters: per-slot house forecast `house_forecast_w: list[float] | None`
+  (from `demand_details["slots"][i]["total_w"]`, aligned with the price quarters) and
+  `nom_charge_min_surplus_w: float` = the *effective* threshold
+  `max(SET_NOM_CHARGE_MIN_SURPLUS_W, SET_MIN_CONTROL_POWER)` computed by the caller.
+- Inside `plan_quarters`: per slot compute
+  `surplus_w[i] = solar_kwh[i] * 1000 / hours[i] − house_forecast_w[i]` (when both present, else
+  `None`); a slot may host solar charging only if `surplus_w[i] is not None and surplus_w[i] >
+  nom_charge_min_surplus_w`. Gate the `solar_cycle` branch accordingly (solar surplus energy
+  `solar_surplus[index]` treated as 0 for gated slots, so no solar charge power is planned
+  there). Grid cycles and discharge are unaffected.
+- Coordinator (`_async_experimental_quarter_plan`, `coordinator.py:1204-1365`): build the
+  per-slot house forecast list aligned to `forecast` quarters (match `demand_details` slots by
+  start time; missing → `None`), pass it plus the effective threshold into `plan_quarters`, and
+  add `surplus_forecast_w` to each output slot when building `experimental_quarter_plan["slots"]`.
+  Plan metadata already gets `nom_charge_min_surplus_w` (the effective threshold) per §10.2.5.
+- `current_plan_dispatch` and `_async_control`: **no changes** for this feature.
+
+**Tests to add:** `plan_quarters` plans no solar charge in slots with surplus ≤ threshold and
+solar charge where surplus > threshold; threshold boundary is strict (`>`); missing house or
+solar forecast → slot not solar-chargeable; `surplus_forecast_w` present on output slots and
+matches solar−house; `current_plan_dispatch` unchanged (still caps at live surplus/PV, no
+threshold re-check); effective threshold = max(new setting, min_control_power_w) passed by
+coordinator; plan refresh triggered when `nom_charge_min_surplus_w` changes.
