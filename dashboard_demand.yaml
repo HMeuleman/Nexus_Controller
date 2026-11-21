@@ -1,7 +1,22 @@
 type: custom:apexcharts-card
+update_interval: 5min
 header:
   show: true
   title: Gebruiks voorspeller (huis en WP) in W
+  show_states: true
+apex_config:
+  chart:
+    zoom:
+      enabled: true
+      type: x
+    toolbar:
+      show: true
+      tools:
+        zoom: true
+        zoomin: true
+        zoomout: true
+        pan: true
+        reset: true
 graph_span: 24h
 span:
   start: minute
@@ -11,6 +26,7 @@ yaxis:
   - id: power
     min: 0
     decimals: 0
+    align_to: 1000
     apex_config:
       title:
         text: W
@@ -22,7 +38,12 @@ yaxis:
         text: Celsius
 series:
   - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
-    name: Total consumption
+    float_precision: 0
+    name: Huis verbruik
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
     yaxis_id: power
     unit: W
     type: line
@@ -33,7 +54,12 @@ series:
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.total_w]);
   - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
-    name: Household without heat pump
+    float_precision: 0
+    name: Huis verbruik - WP
+    show:
+      in_header: false
+      name_in_header: true
+      legend_value: false
     yaxis_id: power
     unit: W
     type: line
@@ -44,7 +70,12 @@ series:
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.baseline_w]);
   - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
-    name: Heat pump
+    float_precision: 0
+    name: Warmtepomp
+    show:
+      in_header: after_now
+      name_in_header: true
+      legend_value: false
     yaxis_id: power
     unit: W
     type: line
@@ -55,9 +86,13 @@ series:
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.heatpump_w]);
   - entity: sensor.kelder_nexus_controller_warmtepompverwachting_komende_24_uur
-    name: Outside temperature
+    name: Buiten temperatuur
+    show:
+      in_header: after_now
+      name_in_header: false
+      legend_value: false
     yaxis_id: temperature
-    unit: C
+    unit: °C
     type: line
     color: '#b04f65'
     stroke_width: 1
@@ -65,31 +100,47 @@ series:
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.temperature_c]);
   - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_komende_24_uur
-    name: Solar forecast (weather-corrected)
-    yaxis_id: power
-    unit: W
-    type: line
-    color: '#e8a020'
-    stroke_width: 2
-    curve: stepline
+    name: Zonne energie
     show:
       in_header: after_now
-      name_in_header: true
+      name_in_header: false
       legend_value: false
-    data_generator: |
-      return (entity.attributes.slots || []).map(slot =>
-        [new Date(slot.start).getTime(), slot.pv_w]);
-  - entity: sensor.kelder_nexus_controller_zonne_opbrengstverwachting_komende_24_uur
-    name: Solar forecast (7-day average)
     yaxis_id: power
     unit: W
     type: line
-    color: '#f2d38a'
+    color: yellow
     stroke_width: 1
     curve: stepline
-    stroke_dasharray: 4
-    show:
-      in_header: legendonly
     data_generator: |
       return (entity.attributes.slots || []).map(slot =>
         [new Date(slot.start).getTime(), slot.baseline_w]);
+  - entity: sensor.solar_forecast_ml_rest_of_day
+    name: ML
+    show:
+      in_header: after_now
+      name_in_header: false
+      legend_value: false
+    yaxis_id: power
+    unit: W
+    type: line
+    color: red
+    stroke_width: 1
+    data_generator: >
+      const out = [];
+
+      const d = new Date();
+
+      const pushDay = (hours, dayOffset) => {
+        for (const [label, kwh] of Object.entries(hours || {})) {
+          const h = Number(label.split(':')[0]);
+          const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() + dayOffset, h);
+          for (let q = 0; q < 4; q++) out.push([start.getTime() + q * 900000, kwh * 1000]);
+        }
+      };
+
+      pushDay(entity.attributes.hourly_forecast, 0);
+
+      pushDay(hass.states['sensor.solar_forecast_ml_forecast_tomorrow'].attributes.hours,
+      1);
+
+      return out.filter(([t]) => t >= Date.now() - 900000);
