@@ -1,6 +1,6 @@
 # Nexus Controller — how the planner works (current implementation)
 
-> Status: descriptive document of the code as it exists on `main` (v0.6.0).
+> Status: descriptive document of the code as it exists on `main` (v0.6.1).
 > New features will be described in a later section of this document.
 
 ## 1. Big picture: two layers
