@@ -440,7 +440,7 @@ one) after `discharge_mode` is annotated. So `experimenteel_kwartierplan` attrib
 **Tests:** `tests/test_quarter_planner.py::test_slot_action_maps_the_five_planner_actions` and
 `test_plan_slots_carry_the_action_field`.
 
-### 10.6 Peak-first greedy planner as a second candidate (hybrid: best of both) — IMPLEMENTED
+### 10.6 Peak-first greedy planner as a second candidate (hybrid: best of both) — **IMPLEMENTED** (commit `c1b094f`)
 
 **Why:** the DP in `plan_quarters` only expresses *contiguous cycles* — one charge block
 immediately feeding one discharge block that returns to the same inventory level. It cannot
