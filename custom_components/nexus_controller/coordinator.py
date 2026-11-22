@@ -1370,11 +1370,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "solar_source": solar_source,
             "nom_charge_min_surplus_w": round(nom_charge_min, 1),
             "nom_discharge_min_demand_w": round(nom_discharge_min, 1),
+            "planner_strategy": result.strategy,
             "limitations": (
-                "Contiguous cycles; bounded inventory levels; constant load; solar omitted "
-                "unless forecast is complete; missing forecast tax uses fallback; "
-                "estimated profit excludes any retained current slot; "
-                "future phase limits may reduce actual power"
+                "Best of DP contiguous cycles and peak-first greedy (max 3 peaks); bounded "
+                "inventory levels; constant load; solar omitted unless forecast is complete; "
+                "missing forecast tax uses fallback; estimated profit excludes any retained "
+                "current slot; future phase limits may reduce actual power"
             ),
             "slots": [
                 {

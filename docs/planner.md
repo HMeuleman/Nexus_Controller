@@ -439,3 +439,68 @@ one) after `discharge_mode` is annotated. So `experimenteel_kwartierplan` attrib
 
 **Tests:** `tests/test_quarter_planner.py::test_slot_action_maps_the_five_planner_actions` and
 `test_plan_slots_carry_the_action_field`.
+
+### 10.6 Peak-first greedy planner as a second candidate (hybrid: best of both) — IMPLEMENTED
+
+**Why:** the DP in `plan_quarters` only expresses *contiguous cycles* — one charge block
+immediately feeding one discharge block that returns to the same inventory level. It cannot
+express "charge fully at the cheapest hours, then discharge part at the morning peak and the
+rest at the evening peak" (one charge feeding two discharge blocks), nor "feed one peak from
+two separate cheap charge moments". With volatile prices (e.g. negative night prices) that
+restriction costs real money: the observed plan charged only ~7.7 kWh at the night trough
+(~35.0 c) because the morning sell block (~3 quarters) capped the cycle's stored energy, and
+charged the remaining ~11 kWh at midday (~38.5 c) instead — worth roughly +0.3–0.8 €/day, and
+much more when night prices are negative.
+
+**Requested search (user):** find the highest peaks (tracking 3 is enough), for each peak scan
+the *whole* earlier period for the cheapest charge moments (respecting room in storage), allow
+several charge moments per peak, then move to the next peak.
+
+**Spec:**
+
+1. New pure greedy planner (nested in `plan_quarters` or separate module), same inputs as the DP:
+   - **Peak seeds**: local maxima of the export sale price `price_i − tax_i` (a seed must beat
+     its left neighbour and not lose to its right neighbour), taken in descending price order with
+     pairwise separation ≥ `max(4, count // 10)` slots, up to `MAX_GREEDY_PEAKS = 3` seeds; stop
+     early when `sale_price − min(purchase price) < min_profit` (nothing profitable left).
+   - **Peak window**: around each seed, expand contiguously while
+     `sale_price_j ≥ max(sale_price_seed − min_profit, min_price + min_profit)` and the slot is
+     not already used.
+   - **Processing order**: the peak loop runs twice — seeds chronologically and seeds by
+     descending price — and the attempt with the higher profit wins.
+   - **Per peak**: desired discharge = per-slot `min(max_power_w, sale_cap)` over the window,
+     where `sale_cap` = `max_power_w` above the export reserve, else the NOM gate
+     (`house_w − solar_w`, 0 when unknown or ≤ `nom_discharge_min_demand_w`) — same as the DP's
+     `sale_limit`. Available stored energy = SOC-above-`min_soc` at the window start (existing
+     inventory counts only when `initial_value_eur_per_kwh` is given, at cost `initial_value`).
+   - **Sourcing**: the remaining energy is charged at the cheapest slots *before the window*,
+     scanning the whole earlier period: grid charge at slot s costs `price_s` per AC kWh (cap
+     `max_power_w × h_s`), solar surplus at slot s costs `price_s − tax_s` (cap
+     `solar_surplus_s`, already NOM-gated). Opportunities are sorted by cost; each tentative
+     charge recomputes the forward SOC series and is kept only if SOC stays ≤ 100 % (room
+     check at that slot). One source kind per slot (`grid` or `solar`), never mixed.
+   - **Discharge**: candidates are the window slots sorted by price descending, capped by the
+     sellable energy (existing inventory plus the free room above the current SOC, so with no
+     `initial_value` existing inventory is not sold); a shrink-to-fit loop drops the
+     lowest-priced sale while the margin fails or the SOC bounds would be violated. Charges are
+     clamped so the full forward SOC tail stays ≤ 100 %; committed peaks must keep the whole
+     series within `[min_soc, 100]`.
+   - **Margin filter**: per peak, `gain / sold ≥ min_profit` with
+     `gain = Σ sale_price_j × AC_j − (existing_used × initial_value + Σ charge AC × cost)`;
+     if it fails, the whole peak (its discharges and its sourced charges) is reverted.
+   - **Profit** (for comparison with the DP) uses the same global accounting:
+     `Σ sale×sold − Σ purchase×bought − initial_value × max(0, initial_soc − final_soc)`.
+2. **Hybrid**: `plan_quarters` computes the DP as today *and* the greedy candidate, and returns
+   the one with the higher `profit_eur`. `QuarterPlan` gains a `strategy: str = "dp"` field
+   (`"dp"` or `"greedy"`); the coordinator publishes it as `planner_strategy` in the
+   `experimental_quarter_plan` metadata and adjusts the `limitations` text accordingly.
+3. No changes to `current_plan_dispatch`, `_planner_action`, or the coordinator's slot
+   annotation: the greedy output uses the same `power_w` / `charge_source` / `soc_pct` shape.
+4. Work stays far below `MAX_PLANNER_WORK` (greedy is O(peaks × count²)).
+
+**Tests to add:** synthetic night-trough + two-peak scenario where one full cheap charge feeds
+both peaks (greedy beats DP, `strategy == "greedy"`, SOC within bounds, profit matches a
+hand-computed value); one peak fed from two charge blocks because the cheapest block is too
+short; margin filter rejects an unprofitable peak; NOM sale cap below the export reserve is
+respected; a case where the DP still wins (`strategy == "dp"`); reproduction of the live plan
+data showing the greedy profit ≥ DP profit.

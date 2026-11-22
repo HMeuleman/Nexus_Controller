@@ -3171,3 +3171,132 @@ def test_plan_slots_carry_the_action_field():
     # High predicted demand (fallback constant 10 kW) -> NOM discharge.
     assert slots[1]["action"] == "nom_discharge"
     assert slots[1]["discharge_mode"] == "nom"
+
+
+def test_greedy_full_cheap_charge_feeds_morning_and_evening_peaks():
+    """§10.6: one full charge at the cheapest hours feeds two discharge peaks."""
+    prices = [0.02] * 8 + [0.45, 0.45] + [0.20] * 6 + [0.55] * 4 + [0.20] * 4
+    result = plan_quarters(
+        prices,
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=0.97,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.0,
+        export_reserve_soc_pct=10.0,
+    )
+
+    assert result.strategy == "greedy"
+    # Charge (nearly) fully at the cheap night slots 0-4.
+    assert all(power < 0 for power in result.power_w[:5])
+    assert result.power_w[5:8] == (0.0, 0.0, 0.0)
+    assert max(result.soc_pct[:8]) == pytest.approx(100.0)
+    # Partial discharge at the morning peak, top-up at midday, full discharge
+    # at the evening peak: one charge block feeds two discharge blocks.
+    assert result.power_w[8] > 0 and result.power_w[9] > 0
+    assert any(power < 0 for power in result.power_w[10:16])
+    assert all(power > 0 for power in result.power_w[16:20])
+    assert all(10 - 1e-7 <= soc <= 100 + 1e-7 for soc in result.soc_pct)
+    assert result.profit_eur == pytest.approx(5.8031, abs=1e-3)
+
+
+def test_greedy_peak_fed_from_multiple_charge_blocks():
+    """§10.6: the cheapest block alone cannot fill the peak -> a second block."""
+    prices = [0.05, 0.05] + [0.25] * 8 + [0.50] * 2
+    result = plan_quarters(
+        prices,
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=0.97,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.0,
+        export_reserve_soc_pct=10.0,
+    )
+
+    assert result.strategy == "greedy"
+    assert result.power_w[0] == pytest.approx(-10_000.0)
+    assert result.power_w[1] == pytest.approx(-10_000.0)
+    # The remaining energy comes from a second, pricier charge block.
+    assert result.power_w[2] < 0
+    assert result.power_w[10] > 0 and result.power_w[11] > 0
+    assert all(10 - 1e-7 <= soc <= 100 + 1e-7 for soc in result.soc_pct)
+    assert result.profit_eur == pytest.approx(2.1715, abs=1e-3)
+
+
+def test_greedy_skips_unprofitable_peak():
+    result = plan_quarters(
+        [0.25, 0.30],
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=0.97,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.0,
+    )
+
+    assert all(power == 0 for power in result.power_w)
+    assert result.profit_eur == 0.0
+
+
+def test_greedy_respects_nom_sale_cap_below_export_reserve():
+    arguments = {
+        "capacity_kwh": 10.0,
+        "min_soc_pct": 10.0,
+        "max_power_w": 10_000.0,
+        "efficiency": 1.0,
+        "min_profit_eur_per_kwh": 0.10,
+        "export_tax_eur_per_kwh": 0.0,
+        "house_load_w": 1000.0,
+        "export_reserve_soc_pct": 30.0,
+        "initial_value_eur_per_kwh": 0.0,
+    }
+    below = plan_quarters([0.10, 0.50], initial_soc_pct=10.0, **arguments)
+    assert below.power_w[1] == pytest.approx(1000.0)  # NOM cap, not 10 kW
+    above = plan_quarters([0.10, 0.50], initial_soc_pct=50.0, **arguments)
+    assert above.power_w[1] == pytest.approx(10_000.0)  # above reserve: full export
+
+
+def test_greedy_sources_from_solar_surplus_first():
+    """§10.6: solar surplus (valued at price − tax) is the cheapest source."""
+    result = plan_quarters(
+        [0.30, 0.25, 0.60],
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.11,
+        house_load_w=0.0,
+        export_reserve_soc_pct=10.0,
+        solar_kwh=[1.0, 0.0, 0.0],
+    )
+
+    assert result.strategy == "greedy"
+    assert result.charge_source == ("solar", "grid", "none")
+    assert result.power_w[0] == pytest.approx(-4_000.0)  # 1.0 kWh surplus
+    assert result.power_w[1] == pytest.approx(-6_000.0)  # grid top-up
+    assert result.power_w[2] == pytest.approx(10_000.0)
+    assert result.profit_eur == pytest.approx(0.66, abs=1e-6)
+
+
+def test_dp_strategy_kept_when_greedy_is_not_better():
+    result = plan_quarters(
+        [0.40, 0.60, 0.55, 0.65],
+        capacity_kwh=2.5,
+        initial_soc_pct=0.0,
+        min_soc_pct=0.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+    )
+
+    assert result.strategy == "dp"
+    assert result.power_w == pytest.approx((-10_000, 0, 0, 10_000))
+    assert result.profit_eur == pytest.approx(0.625)

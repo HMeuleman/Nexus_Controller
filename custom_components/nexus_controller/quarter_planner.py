@@ -12,6 +12,7 @@ from .const import MAX_BATTERY_POWER_W
 from .dispatch import DispatchPlan
 
 MAX_PLANNER_WORK = 20_000_000
+MAX_GREEDY_PEAKS = 3
 
 
 def slot_action(power_w: float, charge_source: str, discharge_mode: str) -> str:
@@ -31,6 +32,7 @@ class QuarterPlan:
     soc_pct: tuple[float, ...]
     profit_eur: float
     charge_source: tuple[str, ...] = ()
+    strategy: str = "dp"
 
 
 def measurement_ages_fresh(
@@ -682,6 +684,236 @@ def plan_quarters(
                                 discharge_w,
                             )
 
+    def greedy_plan() -> tuple[list[float], list[str], float] | None:
+        """Peak-first greedy candidate (docs/planner.md §10.6).
+
+        Up to MAX_GREEDY_PEAKS local price maxima are treated as discharge peaks;
+        each peak is sourced from the cheapest earlier charge slots, so one
+        charge block may feed several peaks and one peak may use several charge
+        blocks. The peak loop runs in chronological and in price order; the
+        better result wins.
+        """
+
+        if count < 2:
+            return None
+        eff = efficiency
+        full_price = [prices[index] - taxes[index] for index in range(count)]
+        purchase_floor = min(prices)
+        separation = max(4, count // 10)
+        seeds: list[int] = []
+        for index in sorted(range(count), key=lambda i: (-full_price[i], i)):
+            if full_price[index] - purchase_floor < min_profit_eur_per_kwh + 1e-12:
+                break
+            left = full_price[index - 1] if index > 0 else -math.inf
+            right = full_price[index + 1] if index + 1 < count else -math.inf
+            if not (full_price[index] > left and full_price[index] >= right):
+                continue
+            if all(abs(index - seed) >= separation for seed in seeds):
+                seeds.append(index)
+            if len(seeds) >= MAX_GREEDY_PEAKS:
+                break
+        if not seeds:
+            return None
+
+        def soc_after(powers_list: list[float]) -> list[float]:
+            stored = capacity_kwh * initial_soc_pct / 100
+            after = []
+            for index in range(count):
+                power = powers_list[index]
+                if power < 0:
+                    stored += -power * eff * hours[index] / 1000
+                elif power > 0:
+                    stored -= power / eff * hours[index] / 1000
+                after.append(stored / capacity_kwh * 100)
+            return after
+
+        def soc_before(powers_list: list[float]) -> list[float]:
+            after = soc_after(powers_list)
+            return [initial_soc_pct, *after[:-1]]
+
+        def sale_cap_at(index: int, soc_pct: float) -> float:
+            if export_reserve_soc_pct is None or soc_pct + 1e-9 >= export_reserve_soc_pct:
+                return max_power_w
+            if not house_known[index] or house_w[index] <= nom_discharge_min_demand_w:
+                return 0.0
+            return min(max_power_w, max(0.0, house_w[index] - solar_w[index]))
+
+        def slot_sale_price(index: int, discharge_w: float) -> float:
+            if discharge_w <= 0:
+                return 0.0
+            if solar_kwh is None:
+                export_share = max(0.0, 1.0 - house_load_w / discharge_w)
+            else:
+                house_kwh = house_load_w * hours[index] / 1000
+                export_share = max(
+                    0.0,
+                    1.0
+                    - max(0.0, house_kwh - solar_kwh[index])
+                    / (discharge_w * hours[index] / 1000),
+                )
+            return prices[index] - taxes[index] * export_share
+
+        def attempt(seed_order: list[int]) -> tuple[list[float], list[str], float]:
+            """Run the peak loop in the given seed order."""
+
+            greedy_powers = [0.0] * count
+            greedy_sources = ["none"] * count
+            used: set[int] = set()
+            for seed in seed_order:
+                if seed in used or greedy_powers[seed] != 0:
+                    continue
+                low = high = seed
+                window_floor = max(
+                    full_price[seed] - min_profit_eur_per_kwh,
+                    purchase_floor + min_profit_eur_per_kwh,
+                )
+                while (
+                    low - 1 >= 0
+                    and greedy_powers[low - 1] == 0
+                    and low - 1 not in used
+                    and full_price[low - 1] >= window_floor - 1e-12
+                ):
+                    low -= 1
+                while (
+                    high + 1 < count
+                    and greedy_powers[high + 1] == 0
+                    and high + 1 not in used
+                    and full_price[high + 1] >= window_floor - 1e-12
+                ):
+                    high += 1
+                used.update(range(low, high + 1))
+                before = soc_before(greedy_powers)
+                existing = (
+                    max(0.0, (before[low] - min_soc_pct) / 100 * capacity_kwh)
+                    if initial_value_eur_per_kwh is not None
+                    else 0.0
+                )
+                # Candidate discharge slots, highest price first. Sellable energy
+                # is the existing inventory (only when it has a value) plus what
+                # can still be charged into the free room above the current SOC.
+                max_sell_stored = existing + (100.0 - before[low]) / 100 * capacity_kwh
+                candidates = sorted(range(low, high + 1), key=lambda j: (-full_price[j], j))
+                sold: list[tuple[int, float]] = []
+                sold_ac = 0.0
+                for index in candidates:
+                    if sold_ac >= max_sell_stored * eff - 1e-9:
+                        break
+                    if greedy_powers[index] != 0:
+                        continue
+                    before = soc_before(greedy_powers)
+                    cap = min(max_power_w, sale_cap_at(index, before[index]))
+                    if cap <= 0:
+                        continue
+                    power = min(cap, (max_sell_stored * eff - sold_ac) * 1000 / hours[index])
+                    if power <= 1e-9:
+                        continue
+                    sold.append((index, power))
+                    sold_ac += power * hours[index] / 1000
+                # Shrink-to-fit: source the sold energy from the cheapest earlier
+                # slots; drop the lowest-priced sale while the margin does not
+                # clear or the SOC bounds would be violated.
+                while sold:
+                    sold_ac = sum(power * hours[index] / 1000 for index, power in sold)
+                    need_ac = max(0.0, sold_ac / eff - existing) / eff
+                    tentative: list[tuple[int, float, str, float]] = []
+                    opportunities: list[tuple[float, int, float, str]] = []
+                    for index in range(low):
+                        if greedy_powers[index] != 0:
+                            continue
+                        ac_cap = max_power_w * hours[index] / 1000
+                        opportunities.append((prices[index], index, ac_cap, "grid"))
+                        if solar_surplus[index] > 0:
+                            opportunities.append(
+                                (
+                                    prices[index] - taxes[index],
+                                    index,
+                                    min(solar_surplus[index], ac_cap),
+                                    "solar",
+                                )
+                            )
+                    opportunities.sort(key=lambda item: (item[0], item[1]))
+                    for cost, index, ac_max, kind in opportunities:
+                        if need_ac <= 1e-9:
+                            break
+                        if greedy_powers[index] != 0:
+                            continue
+                        # A charge at `index` raises the SOC on the whole tail;
+                        # clamp to the room that keeps the tail <= 100 %.
+                        tail_max = max(soc_after(greedy_powers)[index:])
+                        ac_room = max(0.0, (100.0 - tail_max) / 100 * capacity_kwh / eff)
+                        ac = min(need_ac, ac_max, ac_room)
+                        if ac <= 1e-9:
+                            continue
+                        power = min(max_power_w, ac * 1000 / hours[index])
+                        old_power = greedy_powers[index]
+                        old_source = greedy_sources[index]
+                        greedy_powers[index] = -power
+                        greedy_sources[index] = kind
+                        if max(soc_after(greedy_powers)[index:]) > 100 + 1e-9:
+                            greedy_powers[index] = old_power
+                            greedy_sources[index] = old_source
+                            continue
+                        tentative.append((index, old_power, old_source, cost))
+                        need_ac -= power * hours[index] / 1000
+                    for index, power in sold:
+                        greedy_powers[index] = power
+                    after = soc_after(greedy_powers)
+                    revenue = sum(
+                        slot_sale_price(index, power) * power * hours[index] / 1000
+                        for index, power in sold
+                    )
+                    stored_used = sold_ac / eff
+                    existing_used = (
+                        min(existing, stored_used)
+                        if initial_value_eur_per_kwh is not None
+                        else 0.0
+                    )
+                    charge_cost = sum(
+                        -greedy_powers[index] * hours[index] / 1000 * cost
+                        for index, _, _, cost in tentative
+                    )
+                    gain = (
+                        revenue
+                        - existing_used * (initial_value_eur_per_kwh or 0.0)
+                        - charge_cost
+                    )
+                    if (
+                        sold_ac > 1e-9
+                        and gain / sold_ac + 1e-12 >= min_profit_eur_per_kwh
+                        and min(after) >= min_soc_pct - 1e-9
+                        and max(after) <= 100 + 1e-9
+                    ):
+                        break
+                    for index, _ in sold:
+                        greedy_powers[index] = 0.0
+                    for index, old_power, old_source, _ in tentative:
+                        greedy_powers[index] = old_power
+                        greedy_sources[index] = old_source
+                    sold.pop()
+            after = soc_after(greedy_powers)
+            revenue = 0.0
+            purchase = 0.0
+            for index in range(count):
+                power = greedy_powers[index]
+                ac = power * hours[index] / 1000
+                if power > 0:
+                    revenue += slot_sale_price(index, power) * ac
+                elif power < 0:
+                    cost = (
+                        prices[index] - taxes[index]
+                        if greedy_sources[index] == "solar"
+                        else prices[index]
+                    )
+                    purchase += cost * -ac
+            drawn = max(0.0, (initial_soc_pct - after[-1]) / 100 * capacity_kwh)
+            if initial_value_eur_per_kwh is not None:
+                purchase += drawn * initial_value_eur_per_kwh
+            return greedy_powers, greedy_sources, revenue - purchase
+
+        chronological = attempt(sorted(seeds))
+        by_price = attempt(sorted(seeds, key=lambda s: (-full_price[s], s)))
+        return max((chronological, by_price), key=lambda candidate: candidate[2])
+
     powers = [0.0] * count
     charge_sources = ["none"] * count
     cursor = count
@@ -725,6 +957,14 @@ def plan_quarters(
         cursor = buy_start
         state = previous_state
 
+    strategy = "dp"
+    greedy = greedy_plan()
+    if greedy is not None and greedy[2] > profit + 1e-9:
+        powers = greedy[0]
+        charge_sources = greedy[1]
+        profit = greedy[2]
+        strategy = "greedy"
+
     stored_kwh = capacity_kwh * initial_soc_pct / 100
     soc = []
     for index, (power, duration) in enumerate(zip(powers, hours, strict=True)):
@@ -745,4 +985,4 @@ def plan_quarters(
         elif abs(value - 100) < 1e-8:
             value = 100.0
         soc.append(value)
-    return QuarterPlan(tuple(powers), tuple(soc), profit, tuple(charge_sources))
+    return QuarterPlan(tuple(powers), tuple(soc), profit, tuple(charge_sources), strategy)
