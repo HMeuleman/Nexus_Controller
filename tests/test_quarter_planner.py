@@ -3300,3 +3300,68 @@ def test_dp_strategy_kept_when_greedy_is_not_better():
     assert result.strategy == "dp"
     assert result.power_w == pytest.approx((-10_000, 0, 0, 10_000))
     assert result.profit_eur == pytest.approx(0.625)
+
+
+def test_terminal_charge_and_discharge_slots_run_at_max_power():
+    """§10.7: a block ending at 100 % (charge) or min SOC (discharge) ends at 10 kW."""
+    result = plan_quarters(
+        [0.05] * 8 + [0.50] * 4,
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.0,
+        export_reserve_soc_pct=10.0,
+    )
+
+    charge_indices = [i for i, p in enumerate(result.power_w) if p < 0]
+    discharge_indices = [i for i, p in enumerate(result.power_w) if p > 0]
+    # Last slot of the charge block (ends at 100 %) and of the discharge block
+    # (ends at min SOC) run at max power.
+    assert result.power_w[charge_indices[-1]] == pytest.approx(-10_000.0)
+    assert result.power_w[discharge_indices[-1]] == pytest.approx(10_000.0)
+    # Energy-preserving: total block energy and the SOC series are unchanged.
+    assert sum(-p for p in result.power_w if p < 0) * 0.25 / 1000 == pytest.approx(9.0)
+    assert max(result.soc_pct) == pytest.approx(100.0)
+    assert min(result.soc_pct) == pytest.approx(10.0)
+    assert result.profit_eur == pytest.approx(4.05)
+
+
+def test_terminal_discharge_below_reserve_stays_nom_capped():
+    """§10.7: below the export reserve the boost is capped at house − solar."""
+    result = plan_quarters(
+        [0.10, 0.50],
+        capacity_kwh=10.0,
+        initial_soc_pct=10.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.10,
+        export_tax_eur_per_kwh=0.0,
+        house_load_w=1000.0,
+        export_reserve_soc_pct=30.0,
+        initial_value_eur_per_kwh=0.0,
+    )
+
+    assert result.power_w[1] == pytest.approx(1000.0)  # NOM gate, not 10 kW
+
+
+def test_non_terminal_blocks_are_not_boosted():
+    """§10.7: a block that does not reach its SOC target keeps its planned power."""
+    result = plan_quarters(
+        [0.20, 0.80, 0.20],
+        capacity_kwh=20.0,
+        initial_soc_pct=100.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.15,
+        export_tax_eur_per_kwh=0.0,
+        initial_value_eur_per_kwh=0.30,
+    )
+
+    # Single discharge slot ends at 87.5 % (not min SOC) -> unchanged.
+    assert result.power_w == pytest.approx((0, 10_000, 0))
+    assert result.soc_pct[-1] == pytest.approx(87.5)

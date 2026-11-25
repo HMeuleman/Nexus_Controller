@@ -504,3 +504,39 @@ hand-computed value); one peak fed from two charge blocks because the cheapest b
 short; margin filter rejects an unprofitable peak; NOM sale cap below the export reserve is
 respected; a case where the DP still wins (`strategy == "dp"`); reproduction of the live plan
 data showing the greedy profit ≥ DP profit.
+
+### 10.7 Terminal slot of a goal-reaching block runs at max power (full charge/discharge) — SPEC
+
+**Why:** the planner sizes a charge/discharge block so the model SOC lands *exactly* on its
+target, which often leaves the last quarter at reduced power (observed: 9650 W charge, 9079 W
+discharge). With per-phase limits and real efficiency differing from the 97 % model, the actual
+delivered energy can fall short and the battery ends below 100 % / above min SOC. The user wants
+the last quarter of a block whose target is 100 % (charge) or min SOC (discharge) to run at
+**max power (10 kW)** — the inverter/BMS protection prevents over charge/discharge, and commanding
+max gives the best guarantee of reaching the goal.
+
+**Spec:**
+
+1. In `plan_quarters`, after the DP/greedy winner is chosen and before the SOC series is computed,
+   scan the power blocks (maximal contiguous runs of same-sign non-zero power):
+   - **Grid charge block** (`charge_source == "grid"`) whose block-end SOC is ≥ 100 − 1e-6:
+     raise the **last** slot's power to `-max_power_w`. Solar (NOM) charge blocks are untouched
+     (they are surplus-capped at execution).
+   - **Discharge block** whose block-end SOC is ≤ min_soc + 1e-6: raise the last slot's power to
+     the slot's sale cap — `max_power_w` when the SOC at that slot is at/above the export reserve
+     (export mode), else the NOM gate (`house_w − solar_w`, 0 when unknown or ≤
+     `nom_discharge_min_demand_w`) — but only if that exceeds the planned power.
+   - The raise is **energy-preserving**: the extra energy at the last slot is moved from the
+     first slot(s) of the same block, so the whole SOC series and `profit_eur` are unchanged; if
+     the block's own energy is too small to reach max power at the last slot, it is raised as
+     far as that energy allows.
+2. No clamp changes in the final SOC loop: terminal blocks already end exactly on their target,
+   so the energy-preserving rebalance keeps every SOC bound invariant.
+3. No changes to `current_plan_dispatch` / `_async_control`: live caps (SOC gates, phase limits,
+   10 kW, NOM demand/surplus caps) still apply at execution.
+
+**Tests to add:** a charge block ending at 100 % has its last slot at −10 kW while earlier slots
+keep their power and the SOC series is unchanged; a discharge block ending at min SOC has its
+last slot at the export cap (10 kW above reserve); below the reserve the boost is capped at the
+NOM gate (house − solar), not 10 kW; solar charge blocks are not boosted; non-terminal blocks
+are unchanged; the randomized SOC/energy property test applies the same clamp.

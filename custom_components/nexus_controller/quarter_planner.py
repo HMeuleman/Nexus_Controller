@@ -965,6 +965,73 @@ def plan_quarters(
         profit = greedy[2]
         strategy = "greedy"
 
+    def boost_terminal_slots() -> None:
+        """Run the last slot of a block that reaches its SOC target at max power.
+
+        docs/planner.md §10.7: a grid charge block ending at 100 % or a discharge
+        block ending at min SOC gets its final slot raised to the maximum power
+        (capped by the sale limit for discharge). The extra energy is moved from
+        the first slots of the same block, so the SOC series is unchanged and the
+        hardware cutoff does the fine-tuning at full power.
+        """
+
+        before = []
+        after = []
+        stored = capacity_kwh * initial_soc_pct / 100
+        for index in range(count):
+            before.append(stored / capacity_kwh * 100)
+            power = powers[index]
+            if power < 0:
+                stored += -power * efficiency * hours[index] / 1000
+            elif power > 0:
+                stored -= power / efficiency * hours[index] / 1000
+            after.append(stored / capacity_kwh * 100)
+        index = 0
+        while index < count:
+            if powers[index] == 0:
+                index += 1
+                continue
+            end = index
+            while (
+                end + 1 < count
+                and powers[end + 1] != 0
+                and (powers[end + 1] > 0) == (powers[index] > 0)
+            ):
+                end += 1
+            target = None
+            if powers[index] < 0 and charge_sources[index] == "grid" and after[end] >= 100 - 1e-6:
+                target = -max_power_w
+            elif powers[index] > 0 and after[end] <= min_soc_pct + 1e-6:
+                soc_at_end = before[end]
+                if export_reserve_soc_pct is None or soc_at_end + 1e-9 >= export_reserve_soc_pct:
+                    cap = max_power_w
+                elif not house_known[end] or house_w[end] <= nom_discharge_min_demand_w:
+                    cap = 0.0
+                else:
+                    cap = min(max_power_w, max(0.0, house_w[end] - solar_w[end]))
+                if cap > powers[end]:
+                    target = cap
+            if target is not None and end > index and powers[end] != target:
+                # Energy-preserving: move energy from the first slots of the block
+                # into the last slot until it reaches the target power.
+                movable = sum(abs(powers[k]) * hours[k] / 1000 for k in range(index, end))
+                wanted = abs(target - powers[end]) * hours[end] / 1000
+                add = min(wanted, movable)
+                powers[end] += math.copysign(add * 1000 / hours[end], powers[end])
+                move = add
+                k = index
+                while move > 1e-12 and k < end:
+                    avail = abs(powers[k]) * hours[k] / 1000
+                    take = min(avail, move)
+                    powers[k] -= math.copysign(take * 1000 / hours[k], powers[k])
+                    move -= take
+                    if abs(powers[k]) < 1e-9:
+                        powers[k] = 0.0
+                        k += 1
+            index = end + 1
+
+    boost_terminal_slots()
+
     stored_kwh = capacity_kwh * initial_soc_pct / 100
     soc = []
     for index, (power, duration) in enumerate(zip(powers, hours, strict=True)):
