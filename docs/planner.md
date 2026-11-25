@@ -541,7 +541,7 @@ last slot at the export cap (10 kW above reserve); below the reserve the boost i
 NOM gate (house − solar), not 10 kW; solar charge blocks are not boosted; non-terminal blocks
 are unchanged; the randomized SOC/energy property test applies the same clamp.
 
-### 10.8 Planner house load fully from the demand forecast; retire the daytime-average sensor — SPEC
+### 10.8 Planner house load fully from the demand forecast; retire the daytime-average sensor — **IMPLEMENTED** (commit `bb98580`)
 
 **Finding (verified in code):** the NOM gates already use the per-slot demand forecast
 (`house_forecast_w` from `demand_details["slots"][i]["total_w"]`): the solar-surplus charge gate,
