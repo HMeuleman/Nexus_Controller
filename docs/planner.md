@@ -505,7 +505,7 @@ short; margin filter rejects an unprofitable peak; NOM sale cap below the export
 respected; a case where the DP still wins (`strategy == "dp"`); reproduction of the live plan
 data showing the greedy profit ≥ DP profit.
 
-### 10.7 Terminal slot of a goal-reaching block runs at max power (full charge/discharge) — SPEC
+### 10.7 Terminal slot of a goal-reaching block runs at max power (full charge/discharge) — **IMPLEMENTED** (commit `0fea3c3`)
 
 **Why:** the planner sizes a charge/discharge block so the model SOC lands *exactly* on its
 target, which often leaves the last quarter at reduced power (observed: 9650 W charge, 9079 W
