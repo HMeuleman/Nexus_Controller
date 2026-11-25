@@ -17,9 +17,9 @@ A Home Assistant integration that runs a Zonneplan Nexus home battery (modified 
 
 ## Installation
 
-In current Home Assistant versions the sidebar entry is called **Marketplace**; in earlier versions it appears as **HACS** — the steps are the same. The repository is not in the default catalog, so add it as a custom repository:
+In current Home Assistant versions **Marketplace** is part of the **Settings** menu; in earlier versions it was a sidebar entry called **HACS** — the steps are the same. The repository is not in the default catalog, so add it as a custom repository:
 
-1. Open **Marketplace** (older versions: **HACS**), menu, **Custom repositories**.
+1. Open **Settings → Marketplace** (older versions: sidebar entry **HACS**), menu, **Custom repositories**.
 2. Add `https://github.com/HMeuleman/Nexus_Controller`, type **Integration**.
 3. Install **Nexus Controller** and restart Home Assistant.
 4. Add it under **Settings > Devices & services > Add integration**.
