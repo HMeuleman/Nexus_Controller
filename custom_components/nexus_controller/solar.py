@@ -1,15 +1,10 @@
-"""Solar forecast helpers: expected surplus for the battery and daytime load tracking."""
+"""Solar forecast helpers: expected surplus for the battery from demand-forecast slots."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
-
-# Time constant of the daytime load average, in seconds of daylight (about three days).
-LOAD_AVERAGE_TAU_S = 3 * 10 * 3600
-# PV output above which a sample counts as daytime.
-DAYTIME_PV_W = 50.0
 
 
 def hourly_forecast_quarters(
@@ -42,17 +37,36 @@ def hourly_forecast_quarters(
     return quarters
 
 
-def update_load_average(
-    average_w: float | None, *, load_w: float, pv_power_w: float, dt_s: float
+def house_energy_kwh(
+    slots: object, window_start: datetime, window_end: datetime
 ) -> float | None:
-    """Fold a house-load sample into the daytime average; night samples are ignored."""
-    if pv_power_w < DAYTIME_PV_W or not math.isfinite(load_w) or dt_s <= 0:
-        return average_w
-    load_w = max(load_w, 0.0)
-    if average_w is None:
-        return load_w
-    weight = 1 - math.exp(-dt_s / LOAD_AVERAGE_TAU_S)
-    return average_w + weight * (load_w - average_w)
+    """Predicted house energy in kWh within [window_start, window_end) from 15-min slots."""
+    if not isinstance(slots, list) or window_end <= window_start:
+        return None
+    start_utc = window_start.astimezone(UTC)
+    end_utc = window_end.astimezone(UTC)
+    total = 0.0
+    found = False
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            continue
+        raw_w = slot.get("total_w")
+        if raw_w is None or isinstance(raw_w, bool):
+            continue
+        try:
+            start = datetime.fromisoformat(str(slot["start"]))
+            value = float(raw_w)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start.tzinfo is None or not math.isfinite(value) or value < 0:
+            continue
+        slot_start = start.astimezone(UTC)
+        slot_end = slot_start + timedelta(minutes=15)
+        overlap_s = (min(end_utc, slot_end) - max(start_utc, slot_start)).total_seconds()
+        if overlap_s > 0:
+            total += value * overlap_s / 3_600_000
+            found = True
+    return total if found else None
 
 
 def daylight_hours(

@@ -63,7 +63,7 @@ The plan slot carries the intent: `power_w` (sign: **+ = discharge, − = charge
     quarter kWh by `hourly_forecast_quarters()` (`solar.py:15`). Slot kWh =
     `quarter_kwh * duration / 0.25`. If not all plan slots are covered, `solar_input = None`
     (solar omitted from planning, `solar_included: false`).
-  - **House load**: `tracker.state.avg_daytime_load_w` (daytime average).
+  - **House load**: per-slot predicted demand `house_forecast_w` from `demand_details["slots"][i]["total_w"]` (`None` = unknown → NOM gates off for that slot).
   - **Economics**: `min_profit = SET_MIN_EARNINGS`; `initial_value = tracker.state.stored_value`
     (value of energy already in the battery); `export_reserve = _export_reserve_soc(min_soc, …)`
     = 30 % unless export includes tax.
@@ -86,7 +86,7 @@ The plan slot carries the intent: `power_w` (sign: **+ = discharge, − = charge
   previous plan's matching slot = `_quarter_commitment`, so an in-progress quarter keeps its
   committed power).
 - Published as `self.experimental_quarter_plan` with metadata (`generated_at`,
-  `minimum_earnings_eur_kwh`, `estimated_profit_eur`, `house_load_w`, `solar_included`,
+  `minimum_earnings_eur_kwh`, `estimated_profit_eur`, `solar_included`,
   `limitations`, …) and sensor state `"experimental"` (else `"unavailable"`).
 
 ## 4. Validation and execution within the quarter
@@ -193,7 +193,7 @@ Constants: `MAX_BATTERY_POWER_W = 10 kW`, `BATTERY_CAPACITY_KWH = 20.8`,
 
 ## 9. Known limitations (as stated in the plan metadata)
 
-Contiguous cycles only; bounded inventory levels; constant house load; solar omitted unless the
+Contiguous cycles only; bounded inventory levels; per-slot predicted house demand (NOM gated off where the prediction is missing); solar omitted unless the
 ML forecast covers every plan slot; missing forecast tax falls back to `SET_TAX`; estimated
 profit excludes the retained current slot; future phase limits may reduce actual power. The
 planner functions are pure (no HA calls); all device writes go through the actuator in
@@ -540,3 +540,59 @@ keep their power and the SOC series is unchanged; a discharge block ending at mi
 last slot at the export cap (10 kW above reserve); below the reserve the boost is capped at the
 NOM gate (house − solar), not 10 kW; solar charge blocks are not boosted; non-terminal blocks
 are unchanged; the randomized SOC/energy property test applies the same clamp.
+
+### 10.8 Planner house load fully from the demand forecast; retire the daytime-average sensor — SPEC
+
+**Finding (verified in code):** the NOM gates already use the per-slot demand forecast
+(`house_forecast_w` from `demand_details["slots"][i]["total_w"]`): the solar-surplus charge gate,
+the below-reserve `sale_limit`, the greedy `sale_cap_at`, and the slot annotation. But the constant
+daytime average `tracker.state.avg_daytime_load_w` (sensor **Gemiddeld verbruik overdag**) is still
+used for:
+
+1. DP profit accounting: `sale_price()` / `purchase_price()` in `quarter_planner.py` compute the
+   export share from `house_load_w`, not from the per-slot `house_w[i]`.
+2. Greedy profit accounting: `slot_sale_price()` uses `house_load_w`.
+3. The active (in-progress) quarter's NOM caps in `_async_experimental_quarter_plan`
+   (`coordinator.py:1306/1322`) use `house_load`, not the current slot's predicted demand.
+4. Fallback value for slots whose prediction is missing, and for the whole plan when the demand
+   model is absent (`planner_house_w = None` → every slot gets the constant with gates *on*).
+5. Plan metadata `house_load_w` and the "constant load" limitation text.
+6. The **Expected solar surplus** sensor: `solar_surplus_kwh(forecast_kwh, avg_daytime_load_w, hours)`.
+7. The sensor itself (`data["avg_daytime_load"]`, const wiring, live `update_load_average`).
+
+**Spec:**
+
+1. `plan_quarters`: use per-slot `house_w[index]` everywhere — `sale_price` (block-aggregated
+   export share when `solar_kwh is None`, per-slot otherwise), `purchase_price`, greedy
+   `slot_sale_price`. `house_load_w` stays only as the fallback *value* for slots with unknown
+   prediction (`house_known=False`, gates already off); default 0.0 → export share 1 (conservative).
+2. Coordinator `_async_experimental_quarter_plan`: always pass `house_forecast_w` (aligned list,
+   `None` = unknown); remove the `planner_house_w = None` fallback to the constant. No demand model
+   → every slot unknown → NOM gates off plan-wide, conservative accounting. Active-slot caps use
+   `house_forecast_w[0]` (predicted demand now; `None` → 0). Drop `house_load_w=` from the
+   `plan_quarters` call. Metadata: remove `house_load_w`; limitations text no longer says
+   "constant load" but "per-slot predicted house demand; NOM gated off where the prediction is
+   missing".
+3. **Expected solar surplus** (`_read_solar`): predicted house energy over the daylight window is
+   summed from `demand_details` slots (`house_energy_kwh(slots, window_start, window_end)` in
+   `solar.py`, 15-min slots, overlap-weighted); the effective average `house_kwh*1000/hours` feeds
+   the unchanged `solar_surplus_kwh`. Window = [now, next_setting] when the sun is up, else
+   [next_rising, next_setting]. No demand slots → `None` (as today when the average was unset).
+4. Remove the **Gemiddeld verbruik overdag** sensor and all machinery: `avg_daytime_load` entries
+   in `SENSOR_ENTITIES` / `ENTITY_LABELS` / `ENTITY_PRECISION` (const.py), `strings.json`,
+   `translations/en.json`, `translations/nl.json`; `data["avg_daytime_load"]` and the live
+   `update_load_average` update in `coordinator.py` (incl. `_last_time`); the
+   `TrackerState.avg_daytime_load_w` field (`state_from_dict` already ignores unknown stored keys);
+   `update_load_average`, `LOAD_AVERAGE_TAU_S`, `DAYTIME_PV_W` in `solar.py`.
+   Note: the live dashboard view "Nexus", entities card "Nexus Controller", references
+   `sensor.kelder_nexus_controller_gemiddeld_verbruik_overdag` once — that row shows
+   "unavailable" until removed from the card.
+5. `current_plan_dispatch` / `_async_control`: unchanged (live caps only).
+
+**Tests:** `sale_price` / `purchase_price` / greedy profit change when `house_forecast_w` varies
+with `house_load_w` fixed (per-slot used; the constant only fills unknown slots); unknown slots →
+export share 1 (fallback 0) and gates off; coordinator always passes the demand list and uses
+`house_forecast_w[0]` for the active-slot caps; metadata has no `house_load_w`; `house_energy_kwh`
+overlap math; `_read_solar` surplus from demand slots; `avg_daytime_load` gone from
+`ENTITY_LABELS`/translations and `update_load_average` removed; existing
+`plan_quarters(house_load_w=...)` tests keep passing (param = fallback only).

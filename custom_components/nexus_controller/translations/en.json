@@ -102,7 +102,6 @@
       "earned_today": {"name": "Battery earned today"},
       "sample_interval": {"name": "Detected grid sample interval"},
       "discharge_threshold": {"name": "Price from which the battery covers house load"},
-      "avg_daytime_load": {"name": "Average daytime house load"},
       "solar_surplus_forecast": {"name": "Expected solar surplus"},
       "control_mode": {"name": "Control: mode"},
       "control_power": {"name": "Control: power"},

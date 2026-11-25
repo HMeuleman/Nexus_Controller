@@ -122,7 +122,12 @@ from .quarter_planner import (
 )
 from .sample_rate import SampleIntervalEstimator
 from .shadow import ShadowSettings, infer_slot_hours, propose_shadow_action
-from .solar import daylight_hours, hourly_forecast_quarters, solar_surplus_kwh, update_load_average
+from .solar import (
+    daylight_hours,
+    hourly_forecast_quarters,
+    house_energy_kwh,
+    solar_surplus_kwh,
+)
 from .solar_history import SolarHistory
 from .tracker import BatteryTracker
 from .utils import (
@@ -222,7 +227,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         self._last_planner_input_warning_signature: tuple | None = None
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._settle_cancel: CALLBACK_TYPE | None = None
-        self._last_time: datetime | None = None
         self._manual_mode: str | None = None
         self._manual_until = 0.0
 
@@ -1219,7 +1223,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             or not isinstance(soc, (int, float))
         ):
             return
-        house_load = self.tracker.state.avg_daytime_load_w
         tax = 0.0 if self.settings[SET_EXPORT_INCLUDES_TAX] else data.get("tax_used")
         if not isinstance(tax, (int, float)) or tax < 0:
             return
@@ -1241,12 +1244,13 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 )
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
-        demand_available = bool(demand_details.get("slots"))
         house_forecast_w = [
             demand_map.get(start.astimezone(UTC)) for start, _, _ in forecast
         ]
-        # Without a demand model, fall back to the constant average inside the planner.
-        planner_house_w = house_forecast_w if demand_available else None
+        # The planner works per slot on this demand forecast; a None entry means the
+        # prediction is unknown for that slot and the NOM gates stay off there.
+        planner_house_w = house_forecast_w
+        house_now_w = house_forecast_w[0] if house_forecast_w else None
         min_control_w = float(self.settings.get(SET_MIN_CONTROL_POWER, 0.0))
         nom_charge_min = max(
             float(self.settings.get(SET_NOM_CHARGE_MIN_SURPLUS_W, 0.0)), min_control_w
@@ -1302,7 +1306,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 power = min(power, limits[1])
                 if active.get("discharge_mode") == "nom":
                     solar_power = (solar_values[0] or 0.0) * 1000 / duration
-                    power = min(power, max(0.0, (house_load or 0.0) - solar_power))
+                    power = min(power, max(0.0, (house_now_w or 0.0) - solar_power))
                 reserve = (
                     export_reserve if active.get("discharge_mode") == "export" else minimum_soc
                 )
@@ -1318,7 +1322,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 power = min(-power, limits[0])
                 if active.get("charge_source") == "solar":
                     solar_power = (solar_values[0] or 0.0) * 1000 / duration
-                    power = min(power, max(0.0, solar_power - (house_load or 0.0)))
+                    power = min(power, max(0.0, solar_power - (house_now_w or 0.0)))
                 initial_soc = min(
                     100.0,
                     soc + power * duration / 1000 * ONE_WAY_EFFICIENCY
@@ -1338,7 +1342,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     efficiency=ONE_WAY_EFFICIENCY,
                     min_profit_eur_per_kwh=min_earnings,
                     export_tax_eur_per_kwh=tax,
-                    house_load_w=house_load or 0.0,
                     initial_value_eur_per_kwh=stored_value,
                     export_taxes_eur_per_kwh=planning_taxes,
                     solar_kwh=planning_solar,
@@ -1362,7 +1365,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "generated_at": now.isoformat(),
             "minimum_earnings_eur_kwh": min_earnings,
             "estimated_profit_eur": round(result.profit_eur, 4),
-            "house_load_w": house_load,
             "export_tax_eur_kwh": tax,
             "efficiency_model": "fixed 97% per charge and discharge",
             "planning_power_limit_w": MAX_BATTERY_POWER_W,
@@ -1373,7 +1375,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             "planner_strategy": result.strategy,
             "limitations": (
                 "Best of DP contiguous cycles and peak-first greedy (max 3 peaks); bounded "
-                "inventory levels; constant load; solar omitted unless forecast is complete; "
+                "inventory levels; per-slot predicted house demand with NOM gated off where "
+                "the prediction is missing; solar omitted unless forecast is complete; "
                 "missing forecast tax uses fallback; estimated profit excludes any retained "
                 "current slot; future phase limits may reduce actual power"
             ),
@@ -1416,15 +1419,8 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                 if solar_w_slot is not None and house_w_slot is not None
                 else None
             )
-            # Missing demand prediction (model present, slot unknown) blocks NOM discharge.
-            if demand_available and house_w_slot is None:
-                demand_slot = 0.0
-            else:
-                demand_slot = max(
-                    0.0,
-                    (house_w_slot if house_w_slot is not None else (house_load or 0.0))
-                    - (solar_w_slot or 0.0),
-                )
+            # A missing demand prediction for the slot blocks NOM discharge (demand_slot 0).
+            demand_slot = max(0.0, (house_w_slot or 0.0) - (solar_w_slot or 0.0))
             if slot is not active:
                 slot["discharge_mode"] = (
                     "nom"
@@ -1544,7 +1540,7 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         phases: tuple,
         battery_power: float | None,
     ) -> None:
-        """Advance cycle/earnings tracking and the daytime load average."""
+        """Advance cycle/earnings tracking and the stored-energy write-down."""
         price = data.get(CONF_ELECTRICITY_PRICE)
         tax = data.get("tax_used")
         grid = sum(phases) if None not in phases else None
@@ -1560,20 +1556,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             import_price=price if isinstance(price, float) else None,
             export_price=export_price,
         )
-        pv = data.get(PV_POWER_ENTITIES[0])
-        if (
-            self._last_time is not None
-            and grid is not None
-            and battery_power is not None
-            and pv is not None
-        ):
-            self.tracker.state.avg_daytime_load_w = update_load_average(
-                self.tracker.state.avg_daytime_load_w,
-                load_w=grid + pv + battery_power,  # type: ignore[operator]
-                pv_power_w=pv,  # type: ignore[arg-type]
-                dt_s=(now - self._last_time).total_seconds(),
-            )
-        self._last_time = now
         state = self.tracker.state
         upcoming = [forecast for start, forecast in self.price_forecast if start > now]
         soc = data.get(CONF_BATTERY_SOC)
@@ -1599,7 +1581,6 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
         data["cycles_today"] = state.cycles_today
         data["cycles_total"] = state.cycles_total
         data["earned_today"] = state.earned_today
-        data["avg_daytime_load"] = state.avg_daytime_load_w
 
     def _read_solar(self, data: dict[str, float | str | None], now: datetime) -> float:
         """Return expected free PV charge in kWh, and publish the surplus estimate."""
@@ -1616,7 +1597,23 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
             next_setting=dt_util.parse_datetime(str(sun.attributes.get("next_setting"))),
             now=now,
         )
-        surplus = solar_surplus_kwh(forecast_kwh, self.tracker.state.avg_daytime_load_w, hours)
+        # Expected house energy over the same daylight window, from the demand forecast.
+        house_kwh = None
+        if hours:
+            next_rising = dt_util.parse_datetime(str(sun.attributes.get("next_rising")))
+            next_setting = dt_util.parse_datetime(str(sun.attributes.get("next_setting")))
+            window_start = window_end = None
+            if next_setting is not None:
+                if sun.state == "above_horizon":
+                    window_start, window_end = now, next_setting
+                elif next_rising is not None and next_setting > next_rising:
+                    window_start, window_end = next_rising, next_setting
+            if window_start is not None and window_end > window_start:
+                slots = (getattr(self, "demand_details", None) or {}).get("slots") or []
+                if slots:
+                    house_kwh = house_energy_kwh(slots, window_start, window_end)
+        avg_load_w = house_kwh * 1000 / hours if house_kwh is not None and hours else None
+        surplus = solar_surplus_kwh(forecast_kwh, avg_load_w, hours)
         data["solar_surplus_forecast"] = surplus
         return surplus or 0.0
 

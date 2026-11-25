@@ -1034,7 +1034,13 @@ def test_diagnostic_plan_is_read_only_and_exposes_quarters():
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
+        demand_details={
+            "slots": [
+                {"start": start.isoformat(), "total_w": 500.0},
+                {"start": (start + timedelta(minutes=15)).isoformat(), "total_w": 500.0},
+            ]
+        },
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda now, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1052,7 +1058,9 @@ def test_diagnostic_plan_is_read_only_and_exposes_quarters():
     assert coordinator.experimental_quarter_plan["slots"][1]["power_w"] > 0
     assert coordinator.experimental_quarter_plan["slots"][1]["discharge_mode"] == "export"
 
-    coordinator.tracker.state.avg_daytime_load_w = 10_000.0
+    # Raise the predicted demand: the same discharge now counts as NOM.
+    for slot in coordinator.demand_details["slots"]:
+        slot["total_w"] = 10_000.0
     asyncio.run(
         NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (5000, 5000))
     )
@@ -1075,7 +1083,7 @@ def test_future_plan_uses_battery_limit_not_live_phase_limits(limits):
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1144,7 +1152,7 @@ def test_long_forecast_near_quarter_end_ignores_temporary_phase_cap():
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1188,7 +1196,7 @@ def test_current_commitment_uses_live_limit_but_future_plan_uses_10kw(power, lim
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.80)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.80)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1232,7 +1240,7 @@ def test_unknown_active_direction_limit_blocks_soc_projection(power, limits):
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
         experimental_quarter_plan={"slots": [{
@@ -1274,7 +1282,7 @@ def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mod
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1369,7 +1377,7 @@ def test_changed_earnings_reoptimizes_future_quarters():
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1473,7 +1481,7 @@ def test_retained_export_projection_respects_power_cap_and_reserve(soc, limit, p
             SET_EXPORT_INCLUDES_TAX: False,
             SET_TAX: 0.11,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1708,7 +1716,13 @@ def test_diagnostic_planner_uses_conditional_export_reserve():
             SET_EXPORT_INCLUDES_TAX: True,
             SET_TAX: 0.11,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
+        demand_details={
+            "slots": [
+                {"start": start.isoformat(), "total_w": 500.0},
+                {"start": (start + timedelta(minutes=15)).isoformat(), "total_w": 500.0},
+            ]
+        },
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -1762,7 +1776,7 @@ def test_coordinator_plans_from_actual_below_minimum_soc(active_power):
             SET_EXPORT_INCLUDES_TAX: True,
             SET_TAX: 0.11,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.10)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda moment, source="ml": {},
         _planner_solar_source=lambda: "ml",
@@ -2555,7 +2569,7 @@ def test_startup_plan_recovers_after_forecast_becomes_available(monkeypatch):
                 SET_EXPORT_INCLUDES_TAX: True,
             },
             tracker=SimpleNamespace(
-                state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=0.10)
+                state=SimpleNamespace(stored_value=0.10)
             ),
             hass=SimpleNamespace(
                 async_create_task=asyncio.create_task, async_add_executor_job=executor
@@ -2861,7 +2875,7 @@ def test_real_diagnostic_does_not_clear_valid_plan_before_executor_finishes():
                 SET_EXPORT_INCLUDES_TAX: True,
             },
             tracker=SimpleNamespace(
-                state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)
+                state=SimpleNamespace(stored_value=0.30)
             ),
             hass=SimpleNamespace(async_add_executor_job=executor),
             _experimental_solar_quarters=lambda now, source="ml": {},
@@ -2898,7 +2912,7 @@ def test_diagnostic_only_uses_complete_solar_forecast():
             SET_EXPORT_INCLUDES_TAX: False,
             "tax_per_kwh": 0.11,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=1.0)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=1.0)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda now, source="ml": {start: 1.25, second: 0.0},
         _planner_solar_source=lambda: "ml",
@@ -2937,7 +2951,7 @@ def test_diagnostic_scales_current_quarter_solar_to_remaining_time():
             SET_MIN_EARNINGS: 0.15,
             SET_EXPORT_INCLUDES_TAX: True,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=0.0, stored_value=1.0)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=1.0)),
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda now, source="ml": {start: 1.0, second: 0.0},
         _planner_solar_source=lambda: "ml",
@@ -3088,7 +3102,7 @@ def test_plan_slots_carry_forecast_demand_surplus_and_effective_thresholds():
             SET_NOM_CHARGE_MIN_SURPLUS_W: 0,
             SET_NOM_DISCHARGE_MIN_DEMAND_W: 0,
         },
-        tracker=SimpleNamespace(state=SimpleNamespace(avg_daytime_load_w=500.0, stored_value=0.30)),
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
         demand_details={
             "slots": [
                 {"start": start.isoformat(), "total_w": 1500.0},
@@ -3152,10 +3166,13 @@ def test_plan_slots_carry_the_action_field():
             SET_NOM_CHARGE_MIN_SURPLUS_W: 0,
             SET_NOM_DISCHARGE_MIN_DEMAND_W: 0,
         },
-        tracker=SimpleNamespace(
-            state=SimpleNamespace(avg_daytime_load_w=10_000.0, stored_value=0.30)
-        ),
-        demand_details={"slots": []},
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
+        demand_details={
+            "slots": [
+                {"start": start.isoformat(), "total_w": 10_000.0},
+                {"start": second.isoformat(), "total_w": 10_000.0},
+            ]
+        },
         hass=SimpleNamespace(async_add_executor_job=executor),
         _experimental_solar_quarters=lambda now, source="ml": {},
         _planner_solar_source=lambda: "none",
@@ -3168,7 +3185,7 @@ def test_plan_slots_carry_the_action_field():
     assert slots[0]["power_w"] < 0
     assert slots[0]["action"] == "charge"
     assert slots[1]["power_w"] > 0
-    # High predicted demand (fallback constant 10 kW) -> NOM discharge.
+    # High predicted demand (10 kW) -> NOM discharge.
     assert slots[1]["action"] == "nom_discharge"
     assert slots[1]["discharge_mode"] == "nom"
 
@@ -3365,3 +3382,87 @@ def test_non_terminal_blocks_are_not_boosted():
     # Single discharge slot ends at 87.5 % (not min SOC) -> unchanged.
     assert result.power_w == pytest.approx((0, 10_000, 0))
     assert result.soc_pct[-1] == pytest.approx(87.5)
+
+
+def test_plan_prices_use_per_slot_demand_forecast_not_the_constant_fallback():
+    """§10.8: prices follow house_forecast_w; house_load_w only fills unknown slots."""
+    base = dict(
+        capacity_kwh=20.0,
+        initial_soc_pct=100.0,
+        min_soc_pct=10.0,
+        max_power_w=10_000.0,
+        efficiency=1.0,
+        min_profit_eur_per_kwh=0.0,
+        export_tax_eur_per_kwh=0.11,
+        initial_value_eur_per_kwh=0.0,
+        export_reserve_soc_pct=None,
+    )
+    no_house = plan_quarters([0.1, 0.5], house_forecast_w=[0.0, 0.0], **base)
+    high_house = plan_quarters([0.1, 0.5], house_forecast_w=[8000.0, 8000.0], **base)
+    # With no house load all discharge is exported (full tax); with 8 kW house load
+    # only 20 % is exported, so the same sale earns more.
+    assert high_house.profit_eur > no_house.profit_eur
+    # The constant fallback only fills slots whose prediction is unknown.
+    unknown = plan_quarters([0.1, 0.5], house_forecast_w=[None, None], house_load_w=8000.0, **base)
+    assert unknown.profit_eur == pytest.approx(high_house.profit_eur)
+    # An unknown slot with fallback 0 is fully exported (conservative).
+    unknown_zero = plan_quarters([0.1, 0.5], house_forecast_w=[None, None], **base)
+    assert unknown_zero.profit_eur == pytest.approx(no_house.profit_eur)
+
+
+def test_active_slot_nom_cap_uses_predicted_demand_now_and_metadata_drops_house_load_w():
+    """§10.8: the in-progress quarter is capped by house_forecast_w[0]; no constant in metadata."""
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    existing = {
+        "minimum_earnings_eur_kwh": 0.15,
+        "slots": [{
+            "forecast_start": start.isoformat(),
+            "price_eur_kwh": 0.80,
+            "export_tax_eur_kwh": 0.0,
+            "power_w": 6000.0,
+            "charge_source": "none",
+            "discharge_mode": "nom",
+        }],
+    }
+    coordinator = SimpleNamespace(
+        price_forecast=[
+            (start, 0.80),
+            (start + timedelta(minutes=15), 0.10),
+            (start + timedelta(minutes=30), 0.80),
+        ],
+        price_forecast_taxes={},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.10)),
+        demand_details={"slots": [
+            {"start": start.isoformat(), "total_w": 1000.0},
+            {"start": (start + timedelta(minutes=15)).isoformat(), "total_w": 0.0},
+            {"start": (start + timedelta(minutes=30)).isoformat(), "total_w": 0.0},
+        ]},
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
+        experimental_quarter_plan=existing,
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.0}
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    plan = coordinator.experimental_quarter_plan
+    assert "house_load_w" not in plan
+    active = plan["slots"][0]
+    # The committed power is kept, but the projected SOC uses the NOM cap at the
+    # predicted demand now (1000 W, no solar), not a constant average.
+    assert active["power_w"] == 6000.0
+    expected_soc = 50.0 - 1000 * (10 / 60) / 1000 / 0.97 / 20.8 * 100
+    assert active["soc_pct"] == pytest.approx(expected_soc, abs=0.01)
+    assert active["demand_forecast_w"] == 1000.0

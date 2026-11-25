@@ -339,9 +339,10 @@ def plan_quarters(
     solar_cost_prefix = [0.0]
     solar_cell_prefix = [0.0]
     charge_cell_prefix = [0.0]
-    # Per-slot house demand (forecast) with the constant average as fallback,
-    # and per-slot solar power in W. A provided-but-None house entry means the
-    # prediction is unknown for that slot (house_known=False) and gates apply.
+    # Per-slot house demand from the forecast; house_load_w is only the fallback
+    # *value* for slots whose prediction is unknown, and for per-slot solar power
+    # in W. A provided-but-None house entry means the prediction is unknown for
+    # that slot (house_known=False) and the NOM gates stay off.
     house_w = []
     house_known = []
     for index in range(count):
@@ -499,7 +500,8 @@ def plan_quarters(
     def sale_price(start: int, end: int, discharge_w: float) -> float:
         block_hours = hour_prefix[end] - hour_prefix[start]
         if solar_kwh is None:
-            export_share = max(0.0, 1 - house_load_w / discharge_w)
+            house_kwh = sum(house_w[index] * hours[index] for index in range(start, end)) / 1000
+            export_share = max(0.0, 1 - house_kwh / (discharge_w * block_hours / 1000))
             return (
                 prefix[end] - prefix[start] - (tax_prefix[end] - tax_prefix[start]) * export_share
             ) / block_hours
@@ -512,7 +514,7 @@ def plan_quarters(
                     * max(
                         0.0,
                         1
-                        - max(0.0, house_load_w * hours[index] / 1000 - solar_kwh[index])
+                        - max(0.0, house_w[index] * hours[index] / 1000 - solar_kwh[index])
                         / (discharge_w * hours[index] / 1000),
                     )
                 )
@@ -534,7 +536,7 @@ def plan_quarters(
                     - taxes[index]
                     * min(
                         1.0,
-                        max(0.0, solar_kwh[index] - house_load_w * hours[index] / 1000)
+                        max(0.0, solar_kwh[index] - house_w[index] * hours[index] / 1000)
                         / (charge_w * hours[index] / 1000),
                     )
                 )
@@ -742,9 +744,9 @@ def plan_quarters(
             if discharge_w <= 0:
                 return 0.0
             if solar_kwh is None:
-                export_share = max(0.0, 1.0 - house_load_w / discharge_w)
+                export_share = max(0.0, 1.0 - house_w[index] / discharge_w)
             else:
-                house_kwh = house_load_w * hours[index] / 1000
+                house_kwh = house_w[index] * hours[index] / 1000
                 export_share = max(
                     0.0,
                     1.0

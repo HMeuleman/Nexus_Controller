@@ -32,7 +32,6 @@ class TrackerState:
     earned_today: float = 0.0
     stored_value: float = 0.10  # EUR per kWh currently in the battery
     day: str = ""
-    avg_daytime_load_w: float | None = None
     last_discharge_ts: float | None = None  # epoch seconds
     avg_price: float | None = None  # running average import price, EUR/kWh
     writedown_active: bool = False

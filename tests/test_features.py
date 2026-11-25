@@ -17,8 +17,8 @@ from custom_components.nexus_controller.sample_rate import SampleIntervalEstimat
 from custom_components.nexus_controller.solar import (
     daylight_hours,
     hourly_forecast_quarters,
+    house_energy_kwh,
     solar_surplus_kwh,
-    update_load_average,
 )
 from custom_components.nexus_controller.solar_history import SolarHistory
 from custom_components.nexus_controller.tracker import BatteryTracker
@@ -186,10 +186,26 @@ def test_sample_interval_ignores_bursts_of_phase_updates():
     assert estimator.interval_s == pytest.approx(10.0)
 
 
-def test_load_average_only_learns_in_daylight():
-    assert update_load_average(None, load_w=400, pv_power_w=0, dt_s=10) is None
-    assert update_load_average(None, load_w=400, pv_power_w=1000, dt_s=10) == 400
-    assert update_load_average(400, load_w=1400, pv_power_w=1000, dt_s=10) > 400
+def test_house_energy_kwh_sums_overlapping_demand_slots():
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    slots = [
+        {"start": "2026-11-10T11:45:00+00:00", "total_w": 1000.0},  # 15 min overlap
+        {"start": "2026-11-10T12:00:00+00:00", "total_w": 2000.0},  # fully inside
+        {"start": "2026-11-10T12:15:00+00:00", "total_w": 4000.0},  # fully inside
+        {"start": "2026-11-10T12:30:00+00:00", "total_w": 8000.0},  # outside
+        {"start": "2026-11-10T12:45:00+00:00", "total_w": None},  # unknown
+    ]
+    # Window 12:00-12:30: the 11:45 slot ends at 12:00 (no overlap), so
+    # 0.25 h * 2000 W + 0.25 h * 4000 W = 1.5 kWh.
+    assert house_energy_kwh(slots, now, now + timedelta(minutes=30)) == pytest.approx(1.5)
+    assert house_energy_kwh(slots, now, now + timedelta(minutes=15)) == pytest.approx(0.5)
+    # Window 11:50-12:15: 10 min of the 11:45 slot (1000 W) + 15 min of the 12:00 slot.
+    assert house_energy_kwh(
+        slots, now - timedelta(minutes=10), now + timedelta(minutes=15)
+    ) == pytest.approx(1000 * (10 / 60) / 1000 + 0.5)
+    assert house_energy_kwh([], now, now + timedelta(hours=1)) is None
+    assert house_energy_kwh(slots, now + timedelta(hours=2), now + timedelta(hours=3)) is None
+    assert house_energy_kwh(slots, now + timedelta(hours=1), now) is None
 
 
 def test_solar_ml_hourly_energy_is_split_into_utc_quarters():
@@ -426,3 +442,67 @@ def test_forecast_tax_reads_the_live_zonneplan_quarter_entries():
 )
 def test_energy_states_are_normalised_to_kwh(value, unit, expected):
     assert parse_energy_kwh(value, unit) == expected
+
+
+def test_avg_daytime_load_sensor_is_fully_removed():
+    """§10.8: the daytime-average sensor and its wiring are gone."""
+    from custom_components.nexus_controller.const import (
+        ENTITY_LABELS,
+        ENTITY_PRECISION,
+        SENSOR_ENTITIES,
+    )
+
+    assert "avg_daytime_load" not in ENTITY_LABELS
+    assert "avg_daytime_load" not in ENTITY_PRECISION
+    assert "avg_daytime_load" not in SENSOR_ENTITIES
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "custom_components" / "nexus_controller"
+    for name in ("strings.json", "translations/en.json", "translations/nl.json"):
+        assert "avg_daytime_load" not in json.loads((root / name).read_text(encoding="utf-8"))
+    import custom_components.nexus_controller.solar as solar_module
+
+    assert not hasattr(solar_module, "update_load_average")
+
+
+def test_read_solar_surplus_uses_demand_forecast_over_daylight_window():
+    """§10.8: expected solar surplus subtracts the predicted house energy, not a constant."""
+    from custom_components.nexus_controller.const import CONF_SOLAR_FORECAST
+
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    next_setting = now + timedelta(hours=10)
+    slots = [
+        {"start": (now + timedelta(minutes=15 * i)).isoformat(), "total_w": 1000.0}
+        for i in range(40)  # covers the whole 10 h daylight window
+    ]
+    states = {
+        "sensor.solar_forecast_ml_rest_of_day": SimpleNamespace(
+            state="20.0", attributes={"unit_of_measurement": "kWh"}
+        ),
+        "sun.sun": SimpleNamespace(
+            state="above_horizon",
+            attributes={
+                "next_rising": (now + timedelta(hours=16)).isoformat(),
+                "next_setting": next_setting.isoformat(),
+            },
+        ),
+    }
+    coordinator = SimpleNamespace(
+        hass=SimpleNamespace(states=SimpleNamespace(get=lambda eid: states.get(eid))),
+        configured_entity_id=lambda key: (
+            "sensor.solar_forecast_ml_rest_of_day" if key == CONF_SOLAR_FORECAST else None
+        ),
+        demand_details={"slots": slots},
+    )
+    data: dict = {}
+    surplus = NexusCoordinator._read_solar(coordinator, data, now)
+    # 20 kWh PV minus 10 h * 1000 W = 10 kWh predicted surplus.
+    assert surplus == pytest.approx(10.0)
+    assert data["solar_surplus_forecast"] == pytest.approx(10.0)
+
+    # Without demand slots the surplus is unknown (None), as before.
+    coordinator.demand_details = {"slots": []}
+    data = {}
+    assert NexusCoordinator._read_solar(coordinator, data, now) == 0.0
+    assert data["solar_surplus_forecast"] is None

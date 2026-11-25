@@ -102,7 +102,6 @@
       "earned_today": {"name": "Batterij verdiend vandaag"},
       "sample_interval": {"name": "Gedetecteerd meetinterval net"},
       "discharge_threshold": {"name": "Prijs vanaf waar de batterij het huisverbruik dekt"},
-      "avg_daytime_load": {"name": "Gemiddeld verbruik overdag"},
       "solar_surplus_forecast": {"name": "Verwacht zonneoverschot"},
       "control_mode": {"name": "Sturing: modus"},
       "control_power": {"name": "Sturing: vermogen"},
