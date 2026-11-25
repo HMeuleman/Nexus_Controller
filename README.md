@@ -15,6 +15,16 @@ A Home Assistant integration that runs a Zonneplan Nexus home battery (modified 
 - Works with the Solis Modbus force charge/discharge switches and power numbers (`rc_force_battery_charge`, `rc_force_battery_discharge` and their power entities).
 - Optionally powers down the inverter during suitable idle periods, with scheduled wake-up and battery-protection checks.
 
+## Voorbeeld (Nederlands)
+
+Zo ziet een Home Assistant-dashboard eruit waarop de Nexus Controller integratie actief is:
+
+![Voorbeeld screenshot van de actieve Nexus Controller integratie](https://raw.githubusercontent.com/HMeuleman/Nexus_Controller/main/docs/images/nexus-controller-dashboard.png)
+
+*Voorbeeld screenshot van de actieve Nexus Controller integratie: linksboven het energieschema met grid, omvormer en batterij; rechtsboven de verbruiksvoorspeller (huis en warmtepomp); linksonder de batterijplanning met stroomprijs en SOC; rechtsonder de voorspelling versus het werkelijke verbruik van de afgelopen 48 uur.*
+
+<!-- TODO (Nederlands): beschrijf hier welke sensoren je bij Setup moet configureren en waarvoor elke sensor precies dient, met extra screenshots. -->
+
 ## Installation
 
 In current Home Assistant versions **Marketplace** is part of the **Settings** menu; in earlier versions it was a sidebar entry called **HACS** — the steps are the same. The repository is not in the default catalog, so add it as a custom repository:
