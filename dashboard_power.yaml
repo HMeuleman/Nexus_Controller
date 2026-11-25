@@ -1,0 +1,121 @@
+cardstyle: lite
+wide: false
+large_font: true
+show_solar: true
+show_battery: true
+show_grid: true
+center_no_grid: false
+card_height: 100%
+card_width: 100%
+decimal_places: 3
+decimal_places_energy: 2
+dynamic_line_width: true
+max_line_width: 4
+min_line_width: 1
+inverter:
+  modern: true
+  colour: '#db3939'
+  autarky: power
+  model: sunsynk
+  auto_scale: true
+  three_phase: true
+  navigate: ''
+  label_autarky: ''
+  label_ratio: ''
+battery:
+  energy: 20000
+  shutdown_soc: 7
+  show_daily: true
+  count: 1
+  max_power: 20000
+  invert_power: false
+  soc_end_of_charge: 100
+  animate: true
+  dynamic_colour: true
+  show_remaining_energy: true
+  label_daily_chrg: Laden
+  label_daily_dischrg: Ontladen
+  colour: '#d01bab'
+  invert_flow: false
+battery2:
+  energy: 0
+  shutdown_soc: 20
+  soc_end_of_charge: 100
+  invert_power: false
+  hide_soc: false
+  colour: '#ffc0cb'
+  show_remaining_energy: true
+  remaining_energy_to_shutdown: false
+  show_absolute: false
+  auto_scale: true
+  dynamic_colour: true
+  linear_gradient: true
+  animate: true
+  path_threshold: 100
+  navigate: ''
+  invert_flow: false
+solar:
+  show_daily: true
+  mppts: 2
+  pv1_name: Dak
+  pv2_name: Schuur
+  pv1_max_power: 2000
+  pv2_max_power: 4500
+  auto_scale: false
+  dynamic_colour: true
+  custom_label: Dagelijkse Zonne Energie
+load:
+  show_daily: true
+  dynamic_colour: false
+  label_daily_load: Today
+  additional_loads: 3
+  load1_name: WP
+  load1_icon: mdi:heat-pump-outline
+  load2_name: Boiler
+  load2_icon: mdi:water-boiler
+  load3_name: Auto
+  load3_icon: mdi:car
+grid:
+  show_daily_buy: false
+  show_daily_sell: false
+  show_nonessential: true
+  auto_scale: false
+type: custom:sunsynk-power-flow-card
+entities:
+  use_timer_248: switch.sunsynk_toggle_system_timer
+  priority_load_243: switch.sunsynk_toggle_priority_load
+  inverter_voltage_154: sensor.solis_a_phase_voltage
+  load_frequency_192: sensor.solis_grid_frequency
+  inverter_power_175: sensor.sunsynk_inverter_power
+  grid_connected_status_194: binary_sensor.sunsynk_grid_connected_status
+  inverter_status_59: sensor.sunsynk_overall_state
+  day_battery_charge_70: sensor.solis_today_battery_charge_energy
+  day_battery_discharge_71: sensor.solis_today_battery_discharge_energy
+  battery_soc_184: sensor.solis_battery_soc
+  grid_power_169: sensor.electricity_house
+  day_grid_import_76: sensor.sunsynk_day_grid_import
+  day_grid_export_77: sensor.sunsynk_day_grid_export
+  grid_ct_power_172: sensor.electricity_l1_3
+  day_load_energy_84: sensor.energy_usage_house
+  essential_power: none
+  nonessential_power: none
+  aux_power_166: sensor.sunsynk_aux_power
+  day_pv_energy_108: sensor.zonnepalen_levering_dagelijks
+  pv1_power_186: sensor.solaredge_dak_i1_ac_power
+  pv2_power_187: sensor.solaredge_schuur_i2_ac_power
+  pv1_voltage_109: sensor.solaredge_dak_i1_ac_voltage_ab
+  pv1_current_110: sensor.solaredge_dak_i1_ac_current
+  pv2_voltage_111: sensor.solaredge_schuur_i2_ac_voltage_ab
+  pv2_current_112: sensor.solaredge_schuur_i2_ac_current
+  grid_ct_power_total: sensor.electriciteit_meter_3
+  grid_ct_power_L3: sensor.electricity_l3_3
+  grid_ct_power_L2: sensor.electricity_l2_3
+  battery_power_190: sensor.solis_battery_power_net
+  battery_voltage_183: sensor.solis_battery_voltage
+  battery_temp_182: sensor.solis_temperature_2
+  battery_soh: sensor.solis_battery_soh
+  battery_status: sensor.solis_status
+  battery_current_direction: sensor.solis_battery_current_direction
+  essential_load1: sensor.wp_vermogen
+  essential_load2: sensor.warmtepompboiler_power
+  essential_load3: sensor.ev_charger_total_active_power
