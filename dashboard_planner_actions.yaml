@@ -27,6 +27,12 @@ yaxis:
     apex_config:
       title:
         text: W
+  - id: price
+    opposite: true
+    decimals: 3
+    apex_config:
+      title:
+        text: €/kWh
 series:
   - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
     name: NOM ontladen
@@ -116,5 +122,34 @@ series:
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
         const v = s.surplus_forecast_w ?? null;
+        return [[t, v], [t + s.duration_hours * 3600000 - 1, v]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Prijs (€/kWh)
+    yaxis_id: price
+    unit: €/kWh
+    type: line
+    curve: stepline
+    stroke_width: 2
+    color: '#8e44ad'
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        return [[t, s.price_eur_kwh], [t + s.duration_hours * 3600000 - 1, s.price_eur_kwh]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Verkoopprijs (prijs − belasting)
+    yaxis_id: price
+    unit: €/kWh
+    type: line
+    curve: stepline
+    stroke_width: 1
+    color: '#d2b4de'
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        const v = s.price_eur_kwh - (s.export_tax_eur_kwh ?? 0);
         return [[t, v], [t + s.duration_hours * 3600000 - 1, v]];
       });
