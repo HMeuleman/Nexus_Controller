@@ -10,6 +10,7 @@ now:
 yaxis:
   - id: power
     decimals: 0
+    align_to: 1000
     apex_config:
       title:
         text: W
@@ -72,5 +73,35 @@ series:
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
         const v = s.action === 'charge' ? s.power_w : 0;
+        return [[t, v], [t + s.duration_hours * 3600000 - 1, v]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Voorspeld huisverbruik (NOM-cap)
+    yaxis_id: power
+    unit: W
+    type: line
+    curve: stepline
+    stroke_width: 2
+    color: '#7f8c8d'
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        const v = s.demand_forecast_w ?? null;
+        return [[t, v], [t + s.duration_hours * 3600000 - 1, v]];
+      });
+  - entity: sensor.kelder_nexus_controller_experimenteel_kwartierplan
+    name: Voorspeld zonne-overschot
+    yaxis_id: power
+    unit: W
+    type: line
+    curve: stepline
+    stroke_width: 1
+    color: '#b7950b'
+    extend_to: false
+    data_generator: |
+      return (entity.attributes.slots || []).flatMap(s => {
+        const t = new Date(s.start).getTime();
+        const v = s.surplus_forecast_w ?? null;
         return [[t, v], [t + s.duration_hours * 3600000 - 1, v]];
       });
