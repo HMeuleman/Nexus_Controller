@@ -1,6 +1,7 @@
 type: custom:apexcharts-card
 apex_config:
   chart:
+    height: 350
     zoom:
       enabled: true
       type: x
@@ -43,6 +44,8 @@ series:
     stroke_width: 3
     color: '#c0392b'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -58,6 +61,8 @@ series:
     stroke_width: 2
     color: '#e67e22'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -73,6 +78,8 @@ series:
     stroke_width: 3
     color: '#1e8449'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -88,6 +95,8 @@ series:
     stroke_width: 2
     color: '#2471a3'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -103,6 +112,8 @@ series:
     stroke_width: 2
     color: '#7f8c8d'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -118,6 +129,8 @@ series:
     stroke_width: 1
     color: '#b7950b'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -133,6 +146,8 @@ series:
     stroke_width: 2
     color: '#8e44ad'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
@@ -147,6 +162,8 @@ series:
     stroke_width: 1
     color: '#d2b4de'
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |
       return (entity.attributes.slots || []).flatMap(s => {
         const t = new Date(s.start).getTime();
