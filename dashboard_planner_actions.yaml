@@ -3,6 +3,8 @@ header:
   show: true
   title: Kwartierplan (W, + = ontladen, − = laden)
 graph_span: 48h
+span:
+  start: hour
 now:
   show: true
 yaxis:
