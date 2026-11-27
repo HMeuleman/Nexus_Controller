@@ -1292,7 +1292,12 @@ class NexusCoordinator(DataUpdateCoordinator[dict[str, float | str | None]]):
                     active.get("price_eur_kwh") != forecast[0][1]
                     or active.get("export_tax_eur_kwh") != forecast_taxes[0]
                 ):
-                    return
+                    # The quotes changed since the commitment (price or tax mode, e.g.
+                    # the export-tax switch): drop the stale commitment and replan
+                    # against the current forecast instead of staying unavailable.
+                    # _planner_action re-validates the quotes at execution time.
+                    active = None
+                    self._quarter_commitment = None
         initial_soc = soc
         planning_forecast = forecast
         planning_taxes = forecast_taxes

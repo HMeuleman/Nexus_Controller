@@ -84,7 +84,9 @@ The plan slot carries the intent: `power_w` (sign: **+ = discharge, − = charge
   `price_eur_kwh`, `export_tax_eur_kwh`, `power_w`, `charge_source`, `soc_pct`, plus
   `solar_forecast_kwh` and `discharge_mode` (except the active slot, which is prepended from the
   previous plan's matching slot = `_quarter_commitment`, so an in-progress quarter keeps its
-  committed power).
+  committed power). If the committed slot's price/tax quote no longer matches the current
+  forecast (e.g. the export-tax switch changed), the stale commitment is dropped and a fresh
+  plan is generated instead of staying unavailable (§10.9).
 - Published as `self.experimental_quarter_plan` with metadata (`generated_at`,
   `minimum_earnings_eur_kwh`, `estimated_profit_eur`, `solar_included`,
   `limitations`, …) and sensor state `"experimental"` (else `"unavailable"`).
@@ -596,3 +598,22 @@ export share 1 (fallback 0) and gates off; coordinator always passes the demand 
 overlap math; `_read_solar` surplus from demand slots; `avg_daytime_load` gone from
 `ENTITY_LABELS`/translations and `update_load_average` removed; existing
 `plan_quarters(house_load_w=...)` tests keep passing (param = fallback only).
+
+### 10.9 Quote change on the active quarter drops the commitment and replans — **IMPLEMENTED** (commit `PENDING`)
+
+**Bug (reported by user):** toggling **Teruglevering vergoed incl. belasting** off (the 2027 mode)
+made the quarter plan sensor go `unavailable` and stay that way: the retained active slot (and
+every future slot of the previous plan, plus `_quarter_commitment`) carried the old tax quote
+(`0.0`), so the quote-mismatch check in `_async_experimental_quarter_plan` bailed out on every
+replan — including after each quarter rollover — until the switch was toggled back. The
+apexcharts planner card shows "Loading..." while the sensor is unavailable, so the dashboard
+appeared stuck.
+
+**Fix:** on a price/tax quote mismatch the stale commitment is dropped (`active = None`,
+`_quarter_commitment = None`) and a fresh plan is generated against the current forecast, so a
+new plan (possibly all-idle, i.e. a flat line) is published immediately. Execution safety is
+unchanged: `_planner_action` still requires the live price to equal the slot's quoted price
+(else `planner_price_mismatch` → idle) and validates slot quotes against the current forecast.
+
+**Tests:** `test_export_tax_switch_replans_instead_of_staying_unavailable` (toggle mid-quarter
+and after rollover), updated `test_replanning_keeps_active_quarter_and_projects_its_soc`.

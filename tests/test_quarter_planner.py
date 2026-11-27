@@ -1333,16 +1333,21 @@ def test_replanning_keeps_active_quarter_and_projects_its_soc(power, source, mod
     )
     assert coordinator.experimental_quarter_plan["slots"][0]["power_w"] == power
 
+    # A changed current price drops the stale commitment and replans fresh against
+    # the current forecast instead of staying unavailable; the execution side
+    # (_planner_action) still rejects quotes that do not match the live price.
     coordinator.price_forecast[0] = (start, 0.90)
     asyncio.run(
         NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
     )
-    assert data["experimental_quarter_plan"] == "unavailable"
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator._quarter_commitment is not None
+    assert coordinator._quarter_commitment["price_eur_kwh"] == 0.90
     coordinator.experimental_quarter_plan = {}
     asyncio.run(
         NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
     )
-    assert data["experimental_quarter_plan"] == "unavailable"
+    assert data["experimental_quarter_plan"] == "experimental"
 
     coordinator.price_forecast[0] = (start, 0.80)
     asyncio.run(
@@ -3466,3 +3471,78 @@ def test_active_slot_nom_cap_uses_predicted_demand_now_and_metadata_drops_house_
     expected_soc = 50.0 - 1000 * (10 / 60) / 1000 / 0.97 / 20.8 * 100
     assert active["soc_pct"] == pytest.approx(expected_soc, abs=0.01)
     assert active["demand_forecast_w"] == 1000.0
+
+
+def test_export_tax_switch_replans_instead_of_staying_unavailable():
+    """Regression: toggling 'export incl. tax' mid-horizon must not wedge the planner.
+
+    The previous plan's slots (and the quarter commitment) carry the old tax quote,
+    so a quote-mismatch used to make every replan bail out with 'unavailable' until
+    the switch was toggled back. Now the stale commitment is dropped and a fresh plan
+    is published immediately, also after the quarter rolls over.
+    """
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=5)
+
+    async def executor(function):
+        return function()
+
+    forecast = [
+        (start, 0.80),
+        (start + timedelta(minutes=15), 0.20),
+        (start + timedelta(minutes=30), 0.90),
+    ]
+    coordinator = SimpleNamespace(
+        price_forecast=list(forecast),
+        price_forecast_taxes={s: 0.11 for s, _ in forecast},
+        settings={
+            SET_MIN_DISCHARGE_SOC: 10,
+            SET_MIN_EARNINGS: 0.15,
+            SET_EXPORT_INCLUDES_TAX: True,
+            SET_TAX: 0.11,
+        },
+        tracker=SimpleNamespace(state=SimpleNamespace(stored_value=0.30)),
+        demand_details={
+            "slots": [{"start": s.isoformat(), "total_w": 1500.0} for s, _ in forecast]
+        },
+        hass=SimpleNamespace(async_add_executor_job=executor),
+        _experimental_solar_quarters=lambda moment, source="ml": {},
+        _planner_solar_source=lambda: "ml",
+        experimental_quarter_plan={},
+        _quarter_commitment=None,
+    )
+    data = {CONF_BATTERY_SOC: 50.0, "tax_used": 0.11}
+
+    # Plan generated with export tax included (all slot taxes quoted as 0).
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator.experimental_quarter_plan["export_tax_eur_kwh"] == 0.0
+    slots = coordinator.experimental_quarter_plan["slots"]
+    assert all(s["export_tax_eur_kwh"] == 0.0 for s in slots)
+
+    # Switch to 2027 mode (export tax no longer included): taxes become 0.11 per slot.
+    coordinator.settings[SET_EXPORT_INCLUDES_TAX] = False
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(coordinator, data, now, (10000, 10000))
+    )
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator.experimental_quarter_plan["export_tax_eur_kwh"] == 0.11
+    assert all(
+        s["export_tax_eur_kwh"] == pytest.approx(0.11)
+        for s in coordinator.experimental_quarter_plan["slots"]
+    )
+
+    # Quarter rolls over: the previous plan's slots still carry the old tax quote,
+    # but the planner must still regenerate (this used to stay 'unavailable').
+    rollover = start + timedelta(minutes=15)
+    asyncio.run(
+        NexusCoordinator._async_experimental_quarter_plan(
+            coordinator, data, rollover, (10000, 10000)
+        )
+    )
+    assert data["experimental_quarter_plan"] == "experimental"
+    assert coordinator.experimental_quarter_plan["slots"][0]["export_tax_eur_kwh"] == pytest.approx(
+        0.11
+    )
