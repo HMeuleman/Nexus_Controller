@@ -599,7 +599,7 @@ overlap math; `_read_solar` surplus from demand slots; `avg_daytime_load` gone f
 `ENTITY_LABELS`/translations and `update_load_average` removed; existing
 `plan_quarters(house_load_w=...)` tests keep passing (param = fallback only).
 
-### 10.9 Quote change on the active quarter drops the commitment and replans — **IMPLEMENTED** (commit `PENDING`)
+### 10.9 Quote change on the active quarter drops the commitment and replans — **IMPLEMENTED** (commit `a81301c`)
 
 **Bug (reported by user):** toggling **Teruglevering vergoed incl. belasting** off (the 2027 mode)
 made the quarter plan sensor go `unavailable` and stay that way: the retained active slot (and
